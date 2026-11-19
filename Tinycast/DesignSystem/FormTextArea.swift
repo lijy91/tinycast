@@ -186,6 +186,7 @@ struct FormTextArea: NSViewRepresentable {
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            #if canImport(ObjectiveC)
             switch commandSelector {
             case #selector(NSResponder.insertTab(_:)):
                 input.moveFocus(false)
@@ -205,6 +206,23 @@ struct FormTextArea: NSViewRepresentable {
             default:
                 return false
             }
+            #else
+            switch commandSelector {
+            case .insertTab:
+                input.moveFocus(false)
+                return true
+            case .insertBacktab:
+                input.moveFocus(true)
+                return true
+            case .insertTabIgnoringFieldEditor:
+                textView.insertText("\t", replacementRange: textView.selectedRange())
+                return true
+            case .insertNewline, .insertLineBreak, .insertNewlineIgnoringFieldEditor, .insertParagraphSeparator:
+                return !input.allowsLineBreaks
+            default:
+                return false
+            }
+            #endif
         }
     }
 }

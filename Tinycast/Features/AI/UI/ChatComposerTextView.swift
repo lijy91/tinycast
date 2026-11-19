@@ -122,7 +122,11 @@ struct ChatComposerTextView: NSViewRepresentable {
 
         /// Never called mid-composition, so Return confirming an input method's text stays its own.
         func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            #if canImport(ObjectiveC)
             guard selector == #selector(NSResponder.insertNewline(_:)) else { return false }
+            #else
+            guard selector == .insertNewline else { return false }
+            #endif
             if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
                 textView.insertNewlineIgnoringFieldEditor(nil)
             } else {

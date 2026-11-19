@@ -109,6 +109,7 @@ enum AXWindowAccess {
         return copyWindowID(window, &id) == .success && id != 0 ? id : nil
     }
 
+    #if canImport(ObjectiveC)
     private typealias CopyWindowID =
         @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
 
@@ -117,6 +118,10 @@ enum AXWindowAccess {
         guard let symbol = dlsym(dlopen(nil, RTLD_NOW), "_AXUIElementGetWindow") else { return nil }
         return unsafeBitCast(symbol, to: CopyWindowID.self)
     }()
+    #else
+    private static let copyWindowID: ((AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError)? =
+        _AXUIElementGetWindow
+    #endif
 
     // MARK: - Writing a frame
 

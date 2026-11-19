@@ -1,4 +1,7 @@
 import AppKit
+#if os(Windows)
+import CAppKitWindows
+#endif
 
 struct AppEntry: Identifiable, Hashable, Sendable {
     enum Kind: String, CaseIterable, Sendable {
@@ -609,6 +612,9 @@ final class AppIndex {
         paneCache: SettingsPaneScanner.Cache?
     ) -> ([AppEntry], BundleNameCache, SettingsPaneScanner.Cache?) {
         Signposts.interval("AppIndex.scan") {
+            #if os(Windows)
+            return (named(scanWindowsStartMenu(scopes: scopes)), cache, paneCache)
+            #else
             var cache = cache
             var indexByBundleID: [String: Int] = [:]
             var paths = Set<String>()
@@ -672,8 +678,79 @@ final class AppIndex {
             let (panes, panesCache) = SettingsPaneScanner.scan(languages: languages, cache: paneCache)
             // Named here, not at publish: romanizing a CJK index is ~50 ms of main-actor time.
             return (AppIndex.named(apps + panes), cache, panesCache)
+            #endif
         }
     }
+
+    #if os(Windows)
+    nonisolated private static func scanWindowsStartMenu(scopes: [String]) -> [AppEntry] {
+        var dirs: [String] = []
+        if let raw = cak_known_start_menu_dirs_newline() {
+            let text = String(cString: raw)
+            cak_free(raw)
+            dirs.append(
+                contentsOf: text.split(whereSeparator: \.isNewline).map(String.init))
+        }
+        for scope in scopes {
+            let expanded = SearchScopes.expand(scope)
+            if FileManager.default.fileExists(atPath: expanded), !dirs.contains(expanded) {
+                dirs.append(expanded)
+            }
+        }
+        var seenTargets = Set<String>()
+        var entries: [AppEntry] = []
+        let fm = FileManager.default
+        for dir in dirs {
+            let rootURL = URL(fileURLWithPath: dir, isDirectory: true)
+            guard let enumerator = fm.enumerator(
+                at: rootURL, includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else { continue }
+            for case let fileURL as URL in enumerator {
+                let ext = fileURL.pathExtension.lowercased()
+                guard ext == "lnk" || ext == "exe" else { continue }
+                let baseName = fileURL.deletingPathExtension().lastPathComponent
+                let lowerName = baseName.lowercased()
+                if lowerName.contains("uninstall") || lowerName.hasPrefix("unins0") { continue }
+                var targetPath = fileURL.path
+                if ext == "lnk" {
+                    var tBuf = [CChar](repeating: 0, count: 1024)
+                    var aBuf = [CChar](repeating: 0, count: 512)
+                    var iBuf = [CChar](repeating: 0, count: 1024)
+                    var dBuf = [CChar](repeating: 0, count: 512)
+                    var iconIndex: Int32 = 0
+                    let ok = cak_resolve_lnk(
+                        fileURL.path, &tBuf, 1024, &aBuf, 512, &iBuf, 1024, &iconIndex, &dBuf, 512)
+                    if ok != 0 {
+                        let resolved = String(cString: tBuf)
+                        if !resolved.isEmpty {
+                            let lowerTarget = resolved.lowercased()
+                            if lowerTarget.contains("uninstall") || lowerTarget.hasSuffix(".txt")
+                                || lowerTarget.hasSuffix(".html") || lowerTarget.hasSuffix(".chm")
+                            {
+                                continue
+                            }
+                            targetPath = resolved
+                        }
+                    }
+                }
+                let dedupeKey = targetPath.lowercased()
+                guard seenTargets.insert(dedupeKey).inserted else { continue }
+                entries.append(
+                    AppEntry(
+                        id: fileURL.path,
+                        name: baseName,
+                        url: fileURL,
+                        bundleID: dedupeKey,
+                        kind: .application,
+                        iconStamp: FileIconStamp.value(for: fileURL)))
+            }
+        }
+        return entries.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+    #endif
 
     nonisolated private static func named(_ entries: [AppEntry]) -> [AppEntry] {
         entries.map { entry in

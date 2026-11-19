@@ -2,6 +2,7 @@ import Foundation
 import IOKit.hid
 
 /// The private HID SPI behind `hidutil`. See docs/features/hotkeys.md#per-keyboard-remapping.
+#if os(macOS)
 @MainActor
 final class HIDEventSystem {
     struct Keyboard {
@@ -169,3 +170,22 @@ private struct Functions {
         self.unscheduleFromDispatchQueue = unscheduleFromDispatchQueue
     }
 }
+#else
+@MainActor
+final class HIDEventSystem {
+    struct Keyboard {
+        let registryID: UInt64
+        let name: String
+        let vendorID: Int
+        let productID: Int
+    }
+
+    var onKeyboardConnected: ((Keyboard) -> Void)?
+    init?() { nil }
+    var keyboards: [Keyboard] { [] }
+    func keyMappings(of keyboard: Keyboard) -> [HIDKeyMapping] { [] }
+    @discardableResult
+    func setKeyMappings(_ mappings: [HIDKeyMapping], on keyboard: Keyboard) -> Bool { false }
+    func watchConnections() {}
+}
+#endif

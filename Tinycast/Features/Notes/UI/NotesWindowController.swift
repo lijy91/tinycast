@@ -212,9 +212,11 @@ final class NotesWindowController: NSObject, NSWindowDelegate {
                 height: max(panel.frame.height, Theme.Size.noteWindow.height)))
         if let close = panel.standardWindowButton(.closeButton) {
             close.postsFrameChangedNotifications = true
+            #if canImport(ObjectiveC)
             NotificationCenter.default.addObserver(
                 self, selector: #selector(trafficLightFrameDidChange),
                 name: NSView.frameDidChangeNotification, object: close)
+            #endif
         }
         self.panel = panel
         observeTitle()
@@ -241,6 +243,7 @@ final class NotesWindowController: NSObject, NSWindowDelegate {
         }
     }
 
+    #if canImport(ObjectiveC)
     @objc private func trafficLightFrameDidChange(_ notification: Notification) {
         // AppKit can finish laying out the traffic lights after posting the frame change.
         Task { @MainActor [weak self] in
@@ -248,6 +251,7 @@ final class NotesWindowController: NSObject, NSWindowDelegate {
             seatTrafficLights(in: panel)
         }
     }
+    #endif
 
     /// Re-armed after every read, so a rename reaches the title without waiting for the next show.
     private func observeTitle() {

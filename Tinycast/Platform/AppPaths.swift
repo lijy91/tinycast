@@ -50,7 +50,15 @@ enum AppPaths {
 
     /// Absolute, or under `~/`, so the same path means the same folder on every Mac.
     static func isFolderPath(_ path: String) -> Bool {
-        path.hasPrefix("/") || path.hasPrefix("~/")
+        #if os(Windows)
+        if path.count >= 3 {
+            let chars = Array(path.prefix(3))
+            if chars[0].isLetter && chars[1] == ":" && (chars[2] == "\\" || chars[2] == "/") {
+                return true
+            }
+        }
+        #endif
+        return path.hasPrefix("/") || path.hasPrefix("~/")
     }
 
     private static func configFolderName(bundleID: String) -> String {

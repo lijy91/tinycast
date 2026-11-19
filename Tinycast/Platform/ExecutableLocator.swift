@@ -96,7 +96,11 @@ enum ExecutableLocator {
                 .last { $0.hasPrefix(answerMarker) }?
                 .dropFirst(answerMarker.count)
                 .trimmingCharacters(in: .whitespaces) ?? ""
+            #if os(Windows)
+            return path.dropFirst().hasPrefix(":\\") ? path : nil
+            #else
             return path.hasPrefix("/") ? path : nil
+            #endif
         }.value
     }
 
@@ -104,7 +108,10 @@ enum ExecutableLocator {
 
     /// fish binds `-c` arguments to `$argv`, not `$1`; any other shell falls back to zsh.
     nonisolated private static func lookup(_ command: String, in shell: URL) -> (URL, [String]) {
-        switch shell.lastPathComponent {
+        switch shell.lastPathComponent.lowercased() {
+        case "cmd.exe", "cmd":
+            let script = "for /f \"delims=\" %i in ('where \(command) 2^>nul') do @echo \(answerMarker)%i"
+            return (shell, ["/c", script])
         case "fish":
             let script = #"printf '\#(answerMarker)%s\n' (command -v -- $argv[1])"#
             return (shell, ["-ilc", script, command])
@@ -117,9 +124,14 @@ enum ExecutableLocator {
     }
 
     nonisolated private static func loginShell() -> URL {
+        #if os(macOS)
         guard let entry = getpwuid(getuid()), let shell = entry.pointee.pw_shell else {
             return URL(fileURLWithPath: "/bin/zsh")
         }
         return URL(fileURLWithPath: String(cString: shell))
+        #else
+        let comspec = ProcessInfo.processInfo.environment["ComSpec"] ?? "C:\\Windows\\System32\\cmd.exe"
+        return URL(fileURLWithPath: comspec)
+        #endif
     }
 }

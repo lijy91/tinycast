@@ -63,9 +63,25 @@ final class EmojiIndex {
 
     /// Plain files let search follow macOS languages independently of the app's UI language.
     private nonisolated static func keywordPacks(for languages: [String], in bundle: Bundle) -> [String] {
+        #if os(macOS)
         let urls = bundle.urls(forResourcesWithExtension: "txt", subdirectory: "EmojiKeywords") ?? []
+        #else
+        var urls: [URL] = (bundle.urls(forResourcesWithExtension: "txt", subdirectory: "EmojiKeywords") ?? [])
+            .compactMap { $0 as URL }
+        if urls.isEmpty {
+            let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            let dir = cwd.appendingPathComponent("Tinycast/Resources/EmojiKeywords")
+            if let entries = try? FileManager.default.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: nil
+            ) {
+                urls = entries.filter { $0.pathExtension.lowercased() == "txt" }
+            }
+        }
+        #endif
         let byLanguage = Dictionary(
-            urls.map { ($0.deletingPathExtension().lastPathComponent, $0) },
+            urls.map { (url: URL) -> (String, URL) in
+                (url.deletingPathExtension().lastPathComponent, url)
+            },
             uniquingKeysWith: { first, _ in first })
         return EmojiCatalog.keywordLanguages(available: byLanguage.keys.sorted(), preferred: languages)
             .compactMap { byLanguage[$0].flatMap { try? String(contentsOf: $0, encoding: .utf8) } }

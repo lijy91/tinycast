@@ -126,7 +126,11 @@ private final class ChecklistCellView: NSTableCellView {
         super.init(frame: .zero)
         identifier = Self.reuseID
         checkbox.target = self
+        #if canImport(ObjectiveC)
         checkbox.action = #selector(toggled)
+        #else
+        checkbox.actionHandler = { [weak self] _ in self?.toggled() }
+        #endif
         checkbox.lineBreakMode = .byTruncatingMiddle
         defaultTag.textColor = .secondaryLabelColor
         divider.boxType = .separator
@@ -160,7 +164,13 @@ private final class ChecklistCellView: NSTableCellView {
         divider.isHidden = !showsDivider
     }
 
+    #if canImport(ObjectiveC)
     @objc private func toggled() {
         onToggle(itemID, checkbox.state == .on)
     }
+    #else
+    private func toggled() {
+        onToggle(itemID, checkbox.state == .on)
+    }
+    #endif
 }

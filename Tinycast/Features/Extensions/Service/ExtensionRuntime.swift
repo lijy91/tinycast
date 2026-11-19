@@ -172,6 +172,7 @@ final class ExtensionRuntime: @unchecked Sendable {
 
     /// Installs `__tinycastHost` (the JS→Swift seam) and `__tinycastCompile`.
     private func installHost(in context: JSContext) {
+        #if os(macOS)
         let host = JSValue(newObjectIn: context)
 
         let log: @convention(block) (String, String) -> Void = { [weak self] level, message in
@@ -235,6 +236,7 @@ final class ExtensionRuntime: @unchecked Sendable {
             return context.evaluateScript(wrapped, withSourceURL: URL(fileURLWithPath: filename))
         }
         context.setObject(compile, forKeyedSubscript: "__tinycastCompile" as NSString)
+        #endif
     }
 
     // MARK: - Host call plumbing
