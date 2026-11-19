@@ -418,7 +418,8 @@ struct RootPaletteView: View {
     /// Split from `body` for the same reason `keyHandlers` is: one chain cannot carry them all.
     @ViewBuilder
     private func stateObservers(_ content: some View) -> some View {
-        emojiObservers(content)
+        lifecycleHandlers(
+            emojiObservers(content)
             // Every show bumps focusToken so the search field refocuses.
             .onChange(of: vm.focusToken) {
                 resetCompactSelection()
@@ -508,26 +509,28 @@ struct RootPaletteView: View {
             .onChange(of: vm.favoriteSlotToken) {
                 if let index = vm.favoriteSlotIndex { performShortcut(.favoriteSlot(index)) }
             }
-            // One optional makes "exactly one menu" structural; this only presents it.
+        )
+    }
+
+    @ViewBuilder
+    private func lifecycleHandlers(_ content: some View) -> some View {
+        content
             .onChange(of: openMenu) {
                 guard menuOpen else { return }
                 syncMenuPanel(presenting: true)
             }
-            // The hosted tree is its own hierarchy, so the highlight has to be pushed into it.
             .onChange(of: menuSelection) { syncMenuPanel(presenting: false) }
             .onChange(of: vm.menuQuery) { menuQueryChanged() }
             .onDisappear {
                 menuPanel.hide()
                 (hostWindow as? PalettePanel)?.onHeaderFieldBoundaryArrow = nil
             }
-            // The first show builds this view after `prepare`, so no handler saw that reset.
             .onAppear {
                 searchFocused = !screen.hidesSearchField
                 land()
                 focusPendingArgument()
             }
             .modifier(SearchFieldHiding(hidden: hidesSearchField, apply: applySearchFieldHiding))
-            // Several paths flip `paletteIsCollapsed`, so resize the window to match.
             .onChange(of: core.paletteCoordinator.paletteIsCollapsed) {
                 resetCompactSelection()
                 core.paletteCoordinator.syncPaletteSize()

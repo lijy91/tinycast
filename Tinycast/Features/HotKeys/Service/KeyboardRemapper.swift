@@ -84,10 +84,10 @@ final class KeyboardRemapper {
         system.onKeyboardConnected = { [weak self, weak system] keyboard in
             guard let self, let system else { return }
             _ = withOwnership(unavailable: Update.unchanged) {
-                guard mapping != nil || savedMappings[String(keyboard.registryID)] != nil else {
+                guard self.mapping != nil || self.savedMappings[String(keyboard.registryID)] != nil else {
                     return .unchanged
                 }
-                return update(keyboard, in: system)
+                return self.update(keyboard, in: system)
             }
         }
         system.watchConnections()
