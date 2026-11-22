@@ -3,6 +3,7 @@ import Foundation
 /// `open` on a running bundle id only re-activates it, so the relaunch outlives us.
 enum RelaunchRunner {
     static func relaunchAfterExit(_ bundleURL: URL) {
+        #if os(macOS)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         let quoted = bundleURL.path.replacingOccurrences(of: "'", with: "'\\''")
@@ -13,5 +14,12 @@ enum RelaunchRunner {
         ]
         // Orphaned on our exit and reparented to launchd, which is the whole point.
         try? process.run()
+        #elseif os(Windows)
+        guard let exe = ProcessInfo.processInfo.arguments.first else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: exe)
+        process.arguments = ["--relaunch"]
+        try? process.run()
+        #endif
     }
 }

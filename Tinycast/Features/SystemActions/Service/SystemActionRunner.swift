@@ -1,6 +1,9 @@
 import AppKit
 import CoreAudio
 import Darwin
+#if os(Windows)
+import CAppKitWindows
+#endif
 
 struct SystemActionFeedback: Sendable {
     let title: String
@@ -97,6 +100,12 @@ enum SystemActionRunner {
                 at: URL(fileURLWithPath: "/System/Applications/Mission Control.app"),
                 configuration: configuration)
         case .toggleAppearance:
+            #if os(Windows)
+            let dark = AppCore.shared.settings.appearance != .dark
+            AppCore.shared.settings.appearance = dark ? .dark : .light
+            return SystemActionFeedback(
+                dark ? String(localized: "Dark Appearance") : String(localized: "Light Appearance"))
+            #else
             // `set` on an app property returns nothing, so read the state back.
             let result = try await runAppleScript(
                 """
@@ -109,17 +118,32 @@ enum SystemActionRunner {
             let dark = result.flag
             return SystemActionFeedback(
                 dark ? String(localized: "Dark Appearance") : String(localized: "Light Appearance"))
+            #endif
         case .toggleStageManager:
             let on = try await toggleDefault(
                 domain: "com.apple.WindowManager", key: "GloballyEnabled")
             return SystemActionFeedback(
                 on ? String(localized: "Stage Manager On") : String(localized: "Stage Manager Off"))
         case .openTrash:
+            #if os(Windows)
+            guard let recycle = URL(string: "shell:RecycleBinFolder"),
+                NSWorkspace.shared.open(recycle)
+            else {
+                throw SystemActionFailure(String(localized: "Finder could not open the Trash."))
+            }
+            #else
             let trash = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".Trash")
             guard NSWorkspace.shared.open(trash) else {
                 throw SystemActionFailure(String(localized: "Finder could not open the Trash."))
             }
+            #endif
         case .emptyTrash:
+            #if os(Windows)
+            guard cak_empty_recycle_bin() != 0 else {
+                throw SystemActionFailure(String(localized: "Trash could not be emptied."))
+            }
+            return SystemActionFeedback(String(localized: "Trash Emptied"))
+            #else
             // Count first: Finder errors on an empty Trash, and `~/.Trash` is TCC-protected.
             let items =
                 try await runAppleScript("tell application \"Finder\" to count items of trash")
@@ -129,6 +153,7 @@ enum SystemActionRunner {
             }
             try await runAppleScript("tell application \"Finder\" to empty trash")
             return SystemActionFeedback(String(localized: "Trash Emptied"))
+            #endif
         case .ejectAllDisks:
             let ejected = try ejectAllDisks()
             guard ejected > 0 else {
@@ -340,6 +365,11 @@ enum SystemActionRunner {
     }
 
     private static func lockScreen() throws {
+        #if os(Windows)
+        guard cak_lock_workstation() != 0 else {
+            throw SystemActionFailure(String(localized: "Screen locking is unavailable on this Mac."))
+        }
+        #else
         let path = "/System/Library/PrivateFrameworks/login.framework/Versions/Current/login"
         guard let handle = dlopen(path, RTLD_NOW) else {
             throw SystemActionFailure(String(localized: "Screen locking is unavailable on this Mac."))
@@ -351,6 +381,7 @@ enum SystemActionRunner {
                 String(localized: "This macOS version does not expose screen locking."))
         }
         _ = unsafeBitCast(symbol, to: LockScreen.self)()
+        #endif
     }
 
     private static func postMediaKey(_ key: Int32) throws {

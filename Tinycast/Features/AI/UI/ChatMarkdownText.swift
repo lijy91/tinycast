@@ -282,7 +282,11 @@ private final class ChatCodeHeader: NSView {
         button.imagePosition = .imageOnly
         button.contentTintColor = NSColor(Theme.Colors.textSecondary)
         button.target = self
+        #if canImport(ObjectiveC)
         button.action = #selector(copyCode)
+        #else
+        button.actionHandler = { [weak self] _ in self?.copyCode() }
+        #endif
         addSubview(label)
         addSubview(button)
         showIdle()
@@ -316,7 +320,17 @@ private final class ChatCodeHeader: NSView {
         button.setAccessibilityLabel(title)
     }
 
+    #if canImport(ObjectiveC)
     @objc private func copyCode() {
+        runCopyCode()
+    }
+    #else
+    private func copyCode() {
+        runCopyCode()
+    }
+    #endif
+
+    private func runCopyCode() {
         Paster.copyPlainText(code)
         let title = String(localized: "Copied")
         button.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: title)

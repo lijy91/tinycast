@@ -115,6 +115,11 @@ final class AppleShortcutCoordinator {
     }
 
     func openShortcutsApp() {
+        #if os(Windows)
+        core.showMessage(
+            String(localized: "Apple Shortcuts is only available on macOS"), tone: .danger)
+        #else
         AppLauncher.launch(Self.applicationURL)
+        #endif
     }
 }

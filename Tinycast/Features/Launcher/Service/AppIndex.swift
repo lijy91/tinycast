@@ -1,4 +1,7 @@
 import AppKit
+#if os(Windows)
+import CAppKitWindows
+#endif
 
 struct AppEntry: Identifiable, Hashable, Sendable {
     enum Kind: String, CaseIterable, Sendable {
@@ -617,6 +620,9 @@ final class AppIndex {
         paneCache: SettingsPaneScanner.Cache?
     ) -> ([AppEntry], BundleNameCache, SettingsPaneScanner.Cache?) {
         Signposts.interval("AppIndex.scan") {
+            #if os(Windows)
+            return (named(scanWindowsStartMenu(scopes: scopes)), cache, paneCache)
+            #else
             var cache = cache
             var indexByBundleID: [String: Int] = [:]
             var paths = Set<String>()
@@ -680,8 +686,112 @@ final class AppIndex {
             let (panes, panesCache) = SettingsPaneScanner.scan(languages: languages, cache: paneCache)
             // Named here, not at publish: romanizing a CJK index is ~50 ms of main-actor time.
             return (AppIndex.named(apps + panes), cache, panesCache)
+            #endif
         }
     }
+
+    #if os(Windows)
+    nonisolated private static func scanWindowsStartMenu(scopes: [String]) -> [AppEntry] {
+        var dirs: [String] = []
+        if let raw = cak_known_start_menu_dirs_newline() {
+            let text = String(cString: raw)
+            cak_free(raw)
+            dirs.append(
+                contentsOf: text.split(whereSeparator: \.isNewline).map(String.init))
+        }
+        for scope in scopes {
+            let expanded = SearchScopes.expand(scope)
+            if FileManager.default.fileExists(atPath: expanded), !dirs.contains(expanded) {
+                dirs.append(expanded)
+            }
+        }
+        var seenTargets = Set<String>()
+        var entries: [AppEntry] = []
+        let fm = FileManager.default
+        for dir in dirs {
+            let rootURL = URL(fileURLWithPath: dir, isDirectory: true)
+            guard let enumerator = fm.enumerator(
+                at: rootURL, includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else { continue }
+            for case let fileURL as URL in enumerator {
+                let ext = fileURL.pathExtension.lowercased()
+                guard ext == "lnk" || ext == "exe" else { continue }
+                let baseName = fileURL.deletingPathExtension().lastPathComponent
+                let lowerName = baseName.lowercased()
+                if lowerName.contains("uninstall") || lowerName.hasPrefix("unins0") { continue }
+                var targetPath = fileURL.path
+                if ext == "lnk" {
+                    var tBuf = [CChar](repeating: 0, count: 1024)
+                    var aBuf = [CChar](repeating: 0, count: 512)
+                    var iBuf = [CChar](repeating: 0, count: 1024)
+                    var dBuf = [CChar](repeating: 0, count: 512)
+                    var iconIndex: Int32 = 0
+                    let ok = cak_resolve_lnk(
+                        fileURL.path, &tBuf, 1024, &aBuf, 512, &iBuf, 1024, &iconIndex, &dBuf, 512)
+                    if ok != 0 {
+                        let resolved = String(cString: tBuf)
+                        if !resolved.isEmpty {
+                            let lowerTarget = resolved.lowercased()
+                            if lowerTarget.contains("uninstall") || lowerTarget.hasSuffix(".txt")
+                                || lowerTarget.hasSuffix(".html") || lowerTarget.hasSuffix(".chm")
+                            {
+                                continue
+                            }
+                            targetPath = resolved
+                        }
+                    }
+                }
+                let dedupeKey = targetPath.lowercased()
+                guard seenTargets.insert(dedupeKey).inserted else { continue }
+                entries.append(
+                    AppEntry(
+                        id: fileURL.path,
+                        name: baseName,
+                        url: fileURL,
+                        bundleID: dedupeKey,
+                        kind: .application,
+                        iconStamp: FileIconStamp.value(for: fileURL)))
+            }
+        }
+        let sortedApps = entries.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+        return sortedApps + windowsSystemSettingsEntries()
+    }
+
+    nonisolated private static func windowsSystemSettingsEntries() -> [AppEntry] {
+        let specs: [(id: String, name: String, uri: String, symbol: String, keywords: [String])] = [
+            ("ms-settings:display", "Display", "ms-settings:display", "display", ["screen", "resolution", "brightness", "monitor"]),
+            ("ms-settings:sound", "Sound", "ms-settings:sound", "speaker.wave.3.fill", ["audio", "volume", "microphone", "output"]),
+            ("ms-settings:notifications", "Notifications", "ms-settings:notifications", "bell.badge.fill", ["alerts", "focus", "do not disturb"]),
+            ("ms-settings:powersleep", "Power & Battery", "ms-settings:powersleep", "bolt.fill", ["sleep", "energy", "battery"]),
+            ("ms-settings:storagesense", "Storage", "ms-settings:storagesense", "internaldrive.fill", ["disk", "space", "cleanup"]),
+            ("ms-settings:bluetooth", "Bluetooth & Devices", "ms-settings:bluetooth", "dot.radiowaves.left.and.right", ["mouse", "keyboard", "printers"]),
+            ("ms-settings:network", "Network & Internet", "ms-settings:network", "wifi", ["wifi", "ethernet", "vpn", "proxy"]),
+            ("ms-settings:personalization", "Personalization", "ms-settings:personalization", "paintbrush.fill", ["wallpaper", "colors", "themes", "taskbar"]),
+            ("ms-settings:appsfeatures", "Apps", "ms-settings:appsfeatures", "square.grid.2x2.fill", ["installed", "default apps", "startup"]),
+            ("ms-settings:yourinfo", "Accounts", "ms-settings:yourinfo", "person.crop.circle.fill", ["sign-in", "users", "family"]),
+            ("ms-settings:dateandtime", "Time & Language", "ms-settings:dateandtime", "globe", ["clock", "region", "typing", "keyboard"]),
+            ("ms-settings:easeofaccess", "Accessibility", "ms-settings:easeofaccess", "accessibility", ["text size", "contrast", "narrator"]),
+            ("ms-settings:privacy", "Privacy & Security", "ms-settings:privacy", "hand.raised.fill", ["permissions", "camera", "microphone", "windows security"]),
+            ("ms-settings:windowsupdate", "Windows Update", "ms-settings:windowsupdate", "arrow.trianglehead.2.clockwise", ["updates", "check"])
+        ]
+        return specs.compactMap { item in
+            guard let url = URL(string: item.uri) else { return nil }
+            var entry = AppEntry(
+                id: item.id,
+                name: item.name,
+                url: url,
+                bundleID: item.id,
+                kind: .systemSettings
+            )
+            entry.keywords = item.keywords
+            entry.iconOverride = .tile(symbol: item.symbol, tint: SettingsTab.systemSettings.tint)
+            return entry
+        }
+    }
+    #endif
 
     nonisolated private static func named(_ entries: [AppEntry]) -> [AppEntry] {
         entries.map { entry in

@@ -229,7 +229,14 @@ final class ExtensionMenuBarController: NSObject, NSMenuDelegate {
         if item.toolTip != node.string("tooltip") { item.toolTip = node.string("tooltip") }
         let handler = node.handler("onAction")
         if item.target !== self { item.target = self }
+        #if canImport(ObjectiveC)
         let selector = handler == nil ? nil : #selector(performAction(_:))
+        #else
+        let selector = handler == nil ? nil : Selector("performAction:")
+        item.actionClosure = handler == nil ? nil : { [weak self, weak item] in
+            if let item { self?.performAction(item) }
+        }
+        #endif
         if item.action != selector { item.action = selector }
         let action = session.flatMap { session in handler.map { Action(session: session, handler: $0) } }
         if item.representedObject as? Action != action { item.representedObject = action }
@@ -287,7 +294,17 @@ final class ExtensionMenuBarController: NSObject, NSMenuDelegate {
         "arrowRight": "\u{f703}"
     ]
 
+    #if canImport(ObjectiveC)
     @objc private func performAction(_ item: NSMenuItem) {
+        runPerformAction(item)
+    }
+    #else
+    private func performAction(_ item: NSMenuItem) {
+        runPerformAction(item)
+    }
+    #endif
+
+    private func runPerformAction(_ item: NSMenuItem) {
         let event = NSApp.currentEvent
         let type =
             event?.type == .rightMouseUp || event?.type == .rightMouseDown ? "right-click" : "left-click"
@@ -308,7 +325,11 @@ final class ExtensionMenuBarController: NSObject, NSMenuDelegate {
     private func actionItems(in menu: NSMenu) -> [NSMenuItem] {
         menu.items.flatMap { item in
             if let submenu = item.submenu { return actionItems(in: submenu) }
+            #if canImport(ObjectiveC)
             return item.action == #selector(performAction(_:)) ? [item] : []
+            #else
+            return item.action == Selector("performAction:") ? [item] : []
+            #endif
         }
     }
 

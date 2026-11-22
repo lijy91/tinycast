@@ -22,7 +22,7 @@ struct CloudSyncSettingsView: View {
                     SettingsRowTitle(.iCloudSyncSwitch, "Sync with iCloud")
                     Text("Keep settings and content the same on every Mac signed in to your iCloud account.")
                 }
-                .disabled(cloud.status == .unavailable(.unsignedBuild))
+                .disabled(!sync.isEnabled && cloud.status == .unavailable(.unsignedBuild))
                 CloudSyncStatusLine(
                     status: cloud.status, stopReason: cloud.stopReason,
                     retry: { mainApp.send(.refreshICloudSync) })

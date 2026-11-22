@@ -209,31 +209,7 @@ struct CustomCommandEditorView: View {
     private var argumentsSection: some View {
         VStack(alignment: .leading, spacing: metrics.spacing.md) {
             ForEach($editor.arguments) { $argument in
-                let id = argument.id
-                HStack(spacing: metrics.spacing.md) {
-                    Text(verbatim: "$\((editor.arguments.firstIndex { $0.id == id } ?? 0) + 1)")
-                        .foregroundStyle(Theme.Colors.textSecondary)
-                    FormTextInput(
-                        text: $argument.name, focused: focusBinding(.argumentName(id)),
-                        placeholder: String(localized: "Argument name"),
-                        label: String(localized: "Argument name"), moveFocus: editor.advanceFocus
-                    )
-                    .frame(height: metrics.size.dialogButtonHeight)
-                    .formFieldChrome(focused: focusedField == .argumentName(id))
-                    Toggle("Optional", isOn: $argument.isOptional)
-                        .toggleStyle(.checkbox)
-                        .focusable()
-                        .focused($focusedControl, equals: .argumentOptional(id))
-                        .onKeyPress(.space) {
-                            argument.isOptional.toggle()
-                            return .handled
-                        }
-                    action(.removeArgument(id), perform: { editor.removeArgument(id: id) }) {
-                        Image(systemName: "minus.circle")
-                    }
-                    .accessibilityLabel("Remove argument")
-                }
-                .id(CustomCommandEditorSession.Field.argumentName(id))
+                argumentRow($argument)
             }
             action(.addArgument, perform: editor.addArgument) {
                 HStack(spacing: metrics.spacing.sm) {
@@ -256,6 +232,34 @@ struct CustomCommandEditorView: View {
                             """)
                     : String(localized: "Passed to the command in order as $1, $2 …"))
         }
+    }
+
+    private func argumentRow(_ argument: Binding<CustomCommandEditorSession.ArgumentDraft>) -> some View {
+        let id = argument.wrappedValue.id
+        return HStack(spacing: metrics.spacing.md) {
+            Text(verbatim: "$\((editor.arguments.firstIndex { $0.id == id } ?? 0) + 1)")
+                .foregroundStyle(Theme.Colors.textSecondary)
+            FormTextInput(
+                text: argument.name, focused: focusBinding(.argumentName(id)),
+                placeholder: String(localized: "Argument name"),
+                label: String(localized: "Argument name"), moveFocus: editor.advanceFocus
+            )
+            .frame(height: metrics.size.dialogButtonHeight)
+            .formFieldChrome(focused: focusedField == .argumentName(id))
+            Toggle("Optional", isOn: argument.isOptional)
+                .toggleStyle(.checkbox)
+                .focusable()
+                .focused($focusedControl, equals: .argumentOptional(id))
+                .onKeyPress(.space) {
+                    argument.wrappedValue.isOptional.toggle()
+                    return .handled
+                }
+            action(.removeArgument(id), perform: { editor.removeArgument(id: id) }) {
+                Image(systemName: "minus.circle")
+            }
+            .accessibilityLabel("Remove argument")
+        }
+        .id(CustomCommandEditorSession.Field.argumentName(id))
     }
 
     private func isTextField(_ field: CustomCommandEditorSession.Field) -> Bool {

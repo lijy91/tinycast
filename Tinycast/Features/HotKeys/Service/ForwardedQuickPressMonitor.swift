@@ -1,5 +1,6 @@
 import CoreAudio
 import Foundation
+#if os(macOS)
 import IOKit.hid
 
 @MainActor
@@ -75,3 +76,15 @@ final class ForwardedQuickPressMonitor {
         }
     }
 }
+#else
+@MainActor
+final class ForwardedQuickPressMonitor {
+    let mapping: HIDKeyMapping
+
+    init?(mapping: HIDKeyMapping, onSoloRelease: @escaping (UInt64, TimeInterval) -> Void) {
+        return nil
+    }
+
+    func cancelHold() {}
+}
+#endif

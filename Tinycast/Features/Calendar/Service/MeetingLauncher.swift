@@ -13,9 +13,12 @@ enum MeetingLauncher {
         if let appURL = link.appURL, workspace.urlForApplication(toOpen: appURL) != nil {
             return workspace.open(appURL)
         }
-        guard let browserBundleID,
-            let browser = workspace.urlForApplication(withBundleIdentifier: browserBundleID)
-        else { return workspace.open(link.webURL) }
+        guard let browserBundleID else { return workspace.open(link.webURL) }
+        let browser: URL? =
+            workspace.urlForApplication(withBundleIdentifier: browserBundleID)
+            ?? (FileManager.default.fileExists(atPath: browserBundleID)
+                ? URL(fileURLWithPath: browserBundleID) : nil)
+        guard let browser else { return workspace.open(link.webURL) }
         do {
             _ = try await workspace.open(
                 [link.webURL], withApplicationAt: browser,
@@ -33,8 +36,13 @@ enum MeetingLauncher {
         var seen = Set<String>()
         return NSWorkspace.shared.urlsForApplications(toOpen: probe)
             .compactMap { url -> Browser? in
+                #if os(macOS)
                 guard let id = Bundle(url: url)?.bundleIdentifier, seen.insert(id).inserted
                 else { return nil }
+                #else
+                let id = Bundle(url: url)?.bundleIdentifier ?? url.standardizedFileURL.path
+                guard !id.isEmpty, seen.insert(id.lowercased()).inserted else { return nil }
+                #endif
                 return Browser(id: id, name: url.deletingPathExtension().lastPathComponent)
             }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }

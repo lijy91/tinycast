@@ -237,10 +237,33 @@ private enum FileIndexBuild {
         }
         try? FileManager.default.createDirectory(
             at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let helperURL = Bundle.main.bundleURL.appending(path: "Contents/Helpers/FileIndexHelper")
+        #if !os(macOS)
+        if !FileManager.default.isExecutableFile(atPath: helperURL.path) {
+            return await Task.detached(priority: .utility) {
+                guard !Task.isCancelled else { return false }
+                let policy = FileSearchPolicy(request)
+                let roots = FileIndexCrawler.roots(of: policy)
+                guard !roots.isEmpty else { return false }
+                let eventID: UInt64 = 0
+                let crawl = FileIndexCrawler.Crawl(roots: roots, policy: policy)
+                let listings = crawl.run(workers: min(ProcessInfo.processInfo.activeProcessorCount, 4))
+                guard !Task.isCancelled else { return false }
+                progress(crawl.listed)
+                do {
+                    try FileIndexSnapshot.write(
+                        listings, roots: roots, eventID: eventID,
+                        fingerprint: policy.fingerprint, to: output)
+                    return true
+                } catch {
+                    return false
+                }
+            }.value
+        }
+        #endif
         let process = Process()
         let pipe = Pipe()
-        process.executableURL = Bundle.main.bundleURL
-            .appending(path: "Contents/Helpers/FileIndexHelper")
+        process.executableURL = helperURL
         process.arguments = [output.path, String(decoding: payload, as: UTF8.self)]
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = pipe

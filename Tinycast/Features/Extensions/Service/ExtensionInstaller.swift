@@ -85,10 +85,16 @@ struct ExtensionInstaller: Sendable {
 
         let expanded = workspace.appendingPathComponent("expanded", isDirectory: true)
         try FileManager.default.createDirectory(at: expanded, withIntermediateDirectories: true)
+        #if os(Windows)
+        let result = try await run(
+            URL(fileURLWithPath: "C:\\Windows\\System32\\tar.exe"),
+            arguments: ["-xf", archive.path, "-C", expanded.path], in: workspace)
+        #else
         // `ditto` ships with macOS and handles the zips the store serves; Foundation has no unzip.
         let result = try await run(
             URL(fileURLWithPath: "/usr/bin/ditto"),
             arguments: ["-x", "-k", archive.path, expanded.path], in: workspace)
+        #endif
         guard result.status == 0 else {
             throw ExtensionStoreError.downloadFailed(result.trimmedOutput)
         }
@@ -134,7 +140,11 @@ struct ExtensionInstaller: Sendable {
         }
 
         onProgress(.building)
+        #if os(Windows)
+        let ray = source.appendingPathComponent("node_modules/.bin/ray.cmd")
+        #else
         let ray = source.appendingPathComponent("node_modules/.bin/ray")
+        #endif
         guard FileManager.default.isExecutableFile(atPath: ray.path) else {
             // Not a Raycast build: its own script is the only contract, and it emits in place.
             let build = try await run(
@@ -211,7 +221,7 @@ struct ExtensionInstaller: Sendable {
         var searchPath = additionalSearchPaths + ExtensionPackageManager.searchPaths
         // Node first: the package manager spawns `ray` off PATH, and a version manager hides Node.
         if let node { searchPath.insert(node.deletingLastPathComponent().path, at: 0) }
-        environment["PATH"] = searchPath.joined(separator: ":")
+        environment["PATH"] = searchPath.joined(separator: String(ExtensionPackageManager.pathSeparator))
         // Keeps npm from writing progress bars into the output we surface on failure.
         environment["CI"] = "1"
         environment["NO_COLOR"] = "1"
@@ -274,7 +284,11 @@ struct ExtensionInstaller: Sendable {
     /// `Process` makes the child a group leader, so this reaches what the package manager spawned.
     private static func stop(_ process: Process) {
         guard process.isRunning else { return }
+        #if os(Windows)
+        process.terminate()
+        #else
         kill(-process.processIdentifier, SIGTERM)
+        #endif
     }
 }
 

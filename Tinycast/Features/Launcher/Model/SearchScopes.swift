@@ -2,6 +2,18 @@ import Foundation
 
 enum SearchScopes {
     /// Seeded on a fresh install; order matters, the scan deduping by bundle ID.
+    #if os(Windows)
+    static let defaults: [String] = {
+        var list: [String] = []
+        if let appData = ProcessInfo.processInfo.environment["APPDATA"], !appData.isEmpty {
+            list.append(appData + "\\Microsoft\\Windows\\Start Menu\\Programs")
+        }
+        if let progData = ProcessInfo.processInfo.environment["ProgramData"], !progData.isEmpty {
+            list.append(progData + "\\Microsoft\\Windows\\Start Menu\\Programs")
+        }
+        return list.isEmpty ? ["~/AppData/Roaming/Microsoft/Windows/Start Menu/Programs"] : list
+    }()
+    #else
     static let defaults: [String] = [
         "/Applications",
         "/Applications/Utilities",
@@ -14,6 +26,7 @@ enum SearchScopes {
         "/System/Library/CoreServices/Finder.app",
         "~/Applications"
     ]
+    #endif
 
     /// Tilde-abbreviated and unslashed, so a settings backup stays portable across machines.
     static func abbreviate(_ path: String) -> String {
@@ -124,7 +137,12 @@ enum SearchScopes {
 
     private static func trimTrailingSlash(_ path: String) -> String {
         var path = path.trimmingCharacters(in: .whitespaces)
-        while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
+        while path.count > 3 && (path.hasSuffix("/") || path.hasSuffix("\\")) {
+            path.removeLast()
+        }
+        if path.count > 1 && path.count <= 3 && path.hasSuffix("/") {
+            path.removeLast()
+        }
         return path
     }
 }

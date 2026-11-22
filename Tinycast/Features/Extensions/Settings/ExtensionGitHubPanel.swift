@@ -168,7 +168,8 @@ private struct ExtensionToolchainFields: View {
             }
         }
         .onAppear {
-            searchPathsText = core.settings.extensionCustomSearchPaths.joined(separator: ":")
+            searchPathsText = core.settings.extensionCustomSearchPaths
+                .joined(separator: String(ExtensionPackageManager.pathSeparator))
         }
     }
 
@@ -189,7 +190,7 @@ private struct ExtensionToolchainFields: View {
     }
 
     private static func parseSearchPaths(_ text: String) -> [String] {
-        text.split(separator: ":", omittingEmptySubsequences: true)
+        text.split(separator: ExtensionPackageManager.pathSeparator, omittingEmptySubsequences: true)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
     }

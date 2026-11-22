@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 
+#if canImport(ObjectiveC)
 /// Launcher items as a table in one `Form` row, reusing a screenful of hosted rows as it scrolls.
 struct LauncherItemsTable: NSViewRepresentable {
     let entries: [AppEntry]
@@ -221,6 +222,43 @@ private final class LauncherItemCellView: NSTableCellView {
         coordinator.recorderMoved(to: frame.map { host.convert($0, to: container) }, in: self)
     }
 }
+#else
+struct LauncherItemsTable: View {
+    let entries: [AppEntry]
+    let isEnabled: Bool
+    let visibility: VisibilityStore
+    let aliases: AliasStore
+    let hotKeys: HotKeyManager
+    @Binding var recorderFrame: CGRect?
+
+    static let tableOverhang: CGFloat = 10
+    static let searchDividerHeight: CGFloat = 1
+    static let rowHeight: CGFloat = 45
+
+    var body: some View {
+        LazyVStack(spacing: 0) {
+            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                VStack(spacing: 0) {
+                    if index > 0 { Divider() }
+                    LauncherItemRow(entry: entry)
+                        .frame(maxWidth: .infinity, minHeight: Self.rowHeight - 1)
+                }
+            }
+        }
+        .disabled(!isEnabled)
+        .environment(visibility)
+        .environment(aliases)
+        .environment(hotKeys)
+        .overlayPreferenceValue(ShortcutRecorderAnchorKey.self) { anchor in
+            GeometryReader { proxy in
+                Color.clear.onChange(of: anchor.map { proxy[$0] }, initial: true) { _, frame in
+                    if recorderFrame != frame { recorderFrame = frame }
+                }
+            }
+        }
+    }
+}
+#endif
 
 /// What a cell hosts: the row, plus the hairline and environment a `Form` row would hand it.
 private struct LauncherItemCell: View {

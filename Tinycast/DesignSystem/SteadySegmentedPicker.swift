@@ -15,9 +15,18 @@ struct SteadySegmentedPicker<Value: Hashable>: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSSegmentedControl {
+        #if canImport(ObjectiveC)
         let control = NSSegmentedControl(
             labels: options.map(\.title), trackingMode: .selectOne,
             target: context.coordinator, action: #selector(Coordinator.changed(_:)))
+        #else
+        let control = NSSegmentedControl(
+            labels: options.map(\.title), trackingMode: .selectOne,
+            target: context.coordinator, action: nil)
+        control.actionHandler = { [weak coordinator = context.coordinator, weak control] _ in
+            if let control { coordinator?.changed(control) }
+        }
+        #endif
         control.setAccessibilityLabel(title)
         let font = control.font ?? .systemFont(ofSize: NSFont.systemFontSize)
         for (index, option) in options.enumerated() {
@@ -49,9 +58,16 @@ struct SteadySegmentedPicker<Value: Hashable>: NSViewRepresentable {
             self.parent = parent
         }
 
+        #if canImport(ObjectiveC)
         @objc func changed(_ sender: NSSegmentedControl) {
             guard parent.options.indices.contains(sender.selectedSegment) else { return }
             parent.selection = parent.options[sender.selectedSegment].value
         }
+        #else
+        func changed(_ sender: NSSegmentedControl) {
+            guard parent.options.indices.contains(sender.selectedSegment) else { return }
+            parent.selection = parent.options[sender.selectedSegment].value
+        }
+        #endif
     }
 }

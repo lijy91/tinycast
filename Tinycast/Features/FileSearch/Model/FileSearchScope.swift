@@ -17,9 +17,18 @@ enum FileSearchScope {
 
     static func abbreviate(_ path: String, homeDirectory: URL) -> String {
         let home = homeDirectory.standardizedFileURL.path
-        if path == home { return "~" }
-        guard path.hasPrefix(home + "/") else { return path }
-        return "~" + path.dropFirst(home.count)
+        let normPath = path.replacingOccurrences(of: "\\", with: "/")
+        let normHome = home.replacingOccurrences(of: "\\", with: "/")
+        if normPath.caseInsensitiveCompare(normHome) == .orderedSame { return "~" }
+        #if os(Windows)
+        if normPath.lowercased().hasPrefix(normHome.lowercased() + "/") {
+            return "~" + normPath.dropFirst(normHome.count)
+        }
+        return path
+        #else
+        guard path == home || path.hasPrefix(home + "/") else { return path }
+        return path == home ? "~" : "~" + path.dropFirst(home.count)
+        #endif
     }
 
     /// Keeps a scope inside another as the user listed it; only `roots(for:)` folds it.
@@ -41,6 +50,14 @@ enum FileSearchScope {
     }
 
     static func contains(_ root: String, _ path: String) -> Bool {
-        path == root || path.hasPrefix(root == "/" ? "/" : root + "/")
+        #if os(Windows)
+        let r = root.replacingOccurrences(of: "\\", with: "/").lowercased()
+        let p = path.replacingOccurrences(of: "\\", with: "/").lowercased()
+        if p == r { return true }
+        let prefix = r.hasSuffix("/") ? r : (r + "/")
+        return p.hasPrefix(prefix)
+        #else
+        return path == root || path.hasPrefix(root == "/" ? "/" : root + "/")
+        #endif
     }
 }

@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 
+#if canImport(ObjectiveC)
 /// Models as checkboxes in one `Form` row, since a `Form` realizes every row and OpenCode has 400.
 struct AIModelChecklist: NSViewRepresentable {
     struct Item: Equatable {
@@ -126,7 +127,11 @@ private final class ChecklistCellView: NSTableCellView {
         super.init(frame: .zero)
         identifier = Self.reuseID
         checkbox.target = self
+        #if canImport(ObjectiveC)
         checkbox.action = #selector(toggled)
+        #else
+        checkbox.actionHandler = { [weak self] _ in self?.toggled() }
+        #endif
         checkbox.lineBreakMode = .byTruncatingMiddle
         defaultTag.textColor = .secondaryLabelColor
         divider.boxType = .separator
@@ -160,7 +165,59 @@ private final class ChecklistCellView: NSTableCellView {
         divider.isHidden = !showsDivider
     }
 
+    #if canImport(ObjectiveC)
     @objc private func toggled() {
         onToggle(itemID, checkbox.state == .on)
     }
+    #else
+    private func toggled() {
+        onToggle(itemID, checkbox.state == .on)
+    }
+    #endif
 }
+#else
+struct AIModelChecklist: View {
+    struct Item: Equatable, Identifiable {
+        let id: String
+        let title: String
+        let isOn: Bool
+        let isLocked: Bool
+    }
+
+    let items: [Item]
+    let onToggle: (String, Bool) -> Void
+
+    static let rowPadding: CGFloat = 9
+    static let rowHeight: CGFloat = 18 + 2 * rowPadding
+
+    var body: some View {
+        LazyVStack(spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                VStack(spacing: 0) {
+                    if index > 0 { Divider() }
+                    HStack(spacing: Theme.Spacing.md) {
+                        Toggle(
+                            isOn: Binding(
+                                get: { item.isOn || item.isLocked },
+                                set: { onToggle(item.id, $0) }
+                            )
+                        ) {
+                            Text(item.title)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .toggleStyle(.checkbox)
+                        .disabled(item.isLocked)
+                        Spacer(minLength: Theme.Spacing.sm)
+                        if item.isLocked {
+                            Text("Default")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(minHeight: Self.rowHeight)
+                }
+            }
+        }
+    }
+}
+#endif

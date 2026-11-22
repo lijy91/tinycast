@@ -224,11 +224,16 @@ enum EmojiCatalog {
         let candidates = ["en"] + available
         var result: [String] = []
         for language in preferred {
-            guard
-                let match = Bundle.preferredLocalizations(
-                    from: candidates, forPreferences: [language]
-                ).first,
-                match != "en", !result.contains(match)
+            #if os(macOS)
+            let matched = Bundle.preferredLocalizations(
+                from: candidates, forPreferences: [language]
+            ).first
+            #else
+            let matched = Bundle.crossPreferredLocalizations(
+                from: candidates, forPreferences: [language]
+            ).first
+            #endif
+            guard let match = matched, match != "en", !result.contains(match)
             else { continue }
             result.append(match)
         }

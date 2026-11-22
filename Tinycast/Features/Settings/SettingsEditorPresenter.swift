@@ -184,6 +184,9 @@ final class SettingsEditorPresenter: NSObject {
     private weak var parentWindow: NSWindow?
     private var pending: [Pending] = []
     private var presentations: [Presentation] = []
+    #if !canImport(ObjectiveC)
+    private var windowObserverTokens: [NSObjectProtocol] = []
+    #endif
 
     init(core: AppCore, navigation: SettingsNavigationState) {
         self.core = core
@@ -193,6 +196,7 @@ final class SettingsEditorPresenter: NSObject {
 
     func attach(to window: NSWindow?) {
         guard let window, parentWindow !== window else { return }
+        #if canImport(ObjectiveC)
         if let parentWindow {
             NotificationCenter.default.removeObserver(self, name: nil, object: parentWindow)
         }
@@ -204,13 +208,57 @@ final class SettingsEditorPresenter: NSObject {
         NotificationCenter.default.addObserver(
             self, selector: #selector(hostDidChangeFrame(_:)),
             name: NSWindow.didMoveNotification, object: window)
+        #else
+        for token in windowObserverTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+        windowObserverTokens.removeAll()
+        parentWindow = window
+        windowObserverTokens.append(
+            NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification, object: window, queue: .main
+            ) { [weak self, weak window] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let window, window === self.parentWindow else { return }
+                    self.dismissAll()
+                    for token in self.windowObserverTokens {
+                        NotificationCenter.default.removeObserver(token)
+                    }
+                    self.windowObserverTokens.removeAll()
+                    self.parentWindow = nil
+                }
+            })
+        observeResize(of: window)
+        windowObserverTokens.append(
+            NotificationCenter.default.addObserver(
+                forName: NSWindow.didMoveNotification, object: window, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.presentations.forEach(self.layout)
+                }
+            })
+        #endif
         flushPending()
     }
 
+    #if canImport(ObjectiveC)
     @objc private func parentWillClose(_ notification: Notification) {
+        handleParentWillClose(notification)
+    }
+    #endif
+
+    private func handleParentWillClose(_ notification: Notification) {
         guard notification.object as? NSWindow === parentWindow else { return }
         dismissAll()
+        #if canImport(ObjectiveC)
         NotificationCenter.default.removeObserver(self, name: nil, object: parentWindow)
+        #else
+        for token in windowObserverTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+        windowObserverTokens.removeAll()
+        #endif
         parentWindow = nil
     }
 
@@ -295,15 +343,29 @@ final class SettingsEditorPresenter: NSObject {
     }
 
     private func observeResize(of window: NSWindow) {
+        #if canImport(ObjectiveC)
         NotificationCenter.default.addObserver(
             self, selector: #selector(hostDidChangeFrame(_:)),
             name: NSWindow.didResizeNotification, object: window)
+        #else
+        windowObserverTokens.append(
+            NotificationCenter.default.addObserver(
+                forName: NSWindow.didResizeNotification, object: window, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.presentations.forEach(self.layout)
+                }
+            })
+        #endif
     }
 
     /// Outermost first, so a nested panel centres on a parent that has already settled.
+    #if canImport(ObjectiveC)
     @objc private func hostDidChangeFrame(_ notification: Notification) {
         presentations.forEach(layout)
     }
+    #endif
 
     private func layout(_ presentation: Presentation) {
         guard let parent = presentation.parent else { return }

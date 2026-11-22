@@ -1,4 +1,6 @@
+#if os(macOS)
 import Darwin
+#endif
 import Foundation
 
 /// How a run ended. `launchFailed` means the shell never started, so nothing was captured.
@@ -54,7 +56,12 @@ enum ShellCommandRunner {
     private static let standardErrorLimit = 8 * 1024
     /// Only the last line is ever shown, so this is a generous bound on one of them.
     private static let standardOutputLimit = 4 * 1024
+    #if os(Windows)
+    private static let shell = ProcessInfo.processInfo.environment["COMSPEC"]
+        ?? "C:\\Windows\\System32\\cmd.exe"
+    #else
     private static let shell = "/bin/zsh"
+    #endif
     /// Big enough that a chatty command needs few reads, small enough to stay live.
     private static let readSize = 16 * 1024
     /// Coalesces bursts so a flood cannot drive a redraw per line.
@@ -136,6 +143,21 @@ enum ShellCommandRunner {
         _ command: String, arguments: [String] = [], loadingShellEnvironment: Bool = false,
         workingDirectory: String? = nil
     ) -> ShellCommandSession {
+        #if !os(macOS)
+        let events = AsyncStream<ShellCommandEvent> { continuation in
+            queue.async {
+                let res = execute(
+                    command, arguments: arguments,
+                    loadingShellEnvironment: loadingShellEnvironment,
+                    workingDirectory: workingDirectory)
+                if let out = res.standardOutput { continuation.yield(.output(out + "\n")) }
+                if let err = res.standardError { continuation.yield(.output(err + "\n")) }
+                continuation.yield(.finished(res))
+                continuation.finish()
+            }
+        }
+        return ShellCommandSession(events: events, stop: {})
+        #else
         let launch: Launch
         do {
             launch = try prepare(
@@ -176,6 +198,7 @@ enum ShellCommandRunner {
                     terminal.signalSession(SIGKILL)
                 }
             })
+        #endif
     }
 
     nonisolated private static func failedSession(_ reason: String) -> ShellCommandSession {
@@ -187,6 +210,7 @@ enum ShellCommandRunner {
             stop: {})
     }
 
+    #if os(macOS)
     /// One queue, one reader: the decode buffer is touched from here alone, so it needs no lock.
     nonisolated private static func drain(
         _ terminal: PseudoTerminal, stopped: StopFlag,
@@ -237,6 +261,7 @@ enum ShellCommandRunner {
         } while ready < 0 && errno == EINTR
         return ready != 0
     }
+    #endif
 
     /// Set from the main actor and read on the drain queue, so the flag carries its own lock.
     private final class StopFlag: @unchecked Sendable {
@@ -348,6 +373,10 @@ enum ShellCommandRunner {
             throw LaunchFailure(
                 reason: String(localized: "The folder “\(workingDirectory ?? "")” no longer exists."))
         }
+        #if os(Windows)
+        let joined = ([command] + arguments).joined(separator: " ")
+        return Launch(arguments: ["/c", joined], directory: directory, script: nil)
+        #else
         // zsh reads `.zshrc` only for interactive shells, so `-l` alone sees no aliases.
         let flag = loadingShellEnvironment ? "-ilc" : "-lc"
         guard command.hasPrefix("#!") else {
@@ -366,6 +395,7 @@ enum ShellCommandRunner {
         return Launch(
             arguments: [flag, #"exec "$0" "$@""#, script.path] + arguments, directory: directory,
             script: script)
+        #endif
     }
 
     /// A temp file, not a `Pipe`: nothing drains a pipe until the command exits.
@@ -397,6 +427,7 @@ enum ShellCommandRunner {
         }
 
         static func make() -> StreamCapture? {
+            #if os(macOS)
             let template = FileManager.default.temporaryDirectory
                 .appendingPathComponent("tinycast-command-stream.XXXXXX").path
             var bytes = Array(template.utf8CString)
@@ -409,6 +440,14 @@ enum ShellCommandRunner {
             return StreamCapture(
                 url: URL(fileURLWithPath: path),
                 handle: FileHandle(fileDescriptor: descriptor, closeOnDealloc: true))
+            #else
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("tinycast-command-stream-\(UUID().uuidString).tmp")
+            guard FileManager.default.createFile(atPath: url.path, contents: nil),
+                let handle = try? FileHandle(forUpdating: url)
+            else { return nil }
+            return StreamCapture(url: url, handle: handle)
+            #endif
         }
     }
 }

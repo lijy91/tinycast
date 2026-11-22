@@ -26,11 +26,26 @@ enum ExtensionPackageManager: String, CaseIterable, Codable, Identifiable, Senda
     var executableName: String {
         switch self {
         case .automatic: return ""
+        #if os(Windows)
+        case .pnpm: return "pnpm.cmd"
+        case .npm: return "npm.cmd"
+        case .yarn: return "yarn.cmd"
+        case .bun: return "bun.exe"
+        #else
         case .pnpm: return "pnpm"
         case .npm: return "npm"
         case .yarn: return "yarn"
         case .bun: return "bun"
+        #endif
         }
+    }
+
+    static var pathSeparator: Character {
+        #if os(Windows)
+        return ";"
+        #else
+        return ":"
+        #endif
     }
 
     /// Not the frozen-lockfile variants: a committed lockfile is often stale.
@@ -56,6 +71,26 @@ enum ExtensionPackageManager: String, CaseIterable, Codable, Identifiable, Senda
     }
 
     /// A GUI app inherits no shell PATH; anything rarer is `extensionCustomSearchPaths`.
+    #if os(Windows)
+    static let searchPaths: [String] = {
+        let env = ProcessInfo.processInfo.environment
+        var paths: [String] = []
+        if let pf = env["ProgramFiles"] { paths.append(pf + "\\nodejs") }
+        if let local = env["LOCALAPPDATA"] {
+            paths.append(local + "\\pnpm")
+            paths.append(local + "\\Volta\\bin")
+        }
+        if let appData = env["APPDATA"] { paths.append(appData + "\\npm") }
+        paths.append(NSHomeDirectory() + "\\.bun\\bin")
+        paths.append(NSHomeDirectory() + "\\.volta\\bin")
+        if let sysPath = env["PATH"] {
+            for p in sysPath.split(separator: ";").map(String.init) where !p.isEmpty && !paths.contains(p) {
+                paths.append(p)
+            }
+        }
+        return paths
+    }()
+    #else
     static let searchPaths: [String] = [
         "/opt/homebrew/bin",
         "/usr/local/bin",
@@ -70,6 +105,7 @@ enum ExtensionPackageManager: String, CaseIterable, Codable, Identifiable, Senda
         NSHomeDirectory() + "/.yarn/bin",
         NSHomeDirectory() + "/.npm-global/bin"
     ]
+    #endif
 
     /// `additionalSearchPaths` is checked first, so a user folder can win over a built-in.
     func resolve(
@@ -96,8 +132,13 @@ enum ExtensionPackageManager: String, CaseIterable, Codable, Identifiable, Senda
     static func nodeURL(
         in fileManager: FileManager = .default, additionalSearchPaths: [String] = []
     ) -> URL? {
+        #if os(Windows)
+        let nodeName = "node.exe"
+        #else
+        let nodeName = "node"
+        #endif
         for directory in additionalSearchPaths + searchPaths {
-            let candidate = URL(fileURLWithPath: directory).appendingPathComponent("node")
+            let candidate = URL(fileURLWithPath: directory).appendingPathComponent(nodeName)
             if fileManager.isExecutableFile(atPath: candidate.path) { return candidate }
         }
         return nil

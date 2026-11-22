@@ -38,7 +38,11 @@ final class AIChatWindowChrome: NSObject, WindowChrome, NSToolbarDelegate, NSSea
         actionsButton.bezelStyle = .toolbar
         actionsButton.toolTip = String(localized: "Actions  ⌘K")
         actionsButton.target = self
+        #if canImport(ObjectiveC)
         actionsButton.action = #selector(showActions)
+        #else
+        actionsButton.actionHandler = { [weak self] _ in self?.showActions() }
+        #endif
     }
 
     isolated deinit {
@@ -89,15 +93,29 @@ final class AIChatWindowChrome: NSObject, WindowChrome, NSToolbarDelegate, NSSea
     ) -> NSToolbarItem? {
         switch identifier {
         case Self.sidebar:
+            #if canImport(ObjectiveC)
             return button(
                 identifier, symbol: "sidebar.left", label: String(localized: "Sidebar"),
                 toolTip: String(localized: "Show or Hide Sidebar  ⌘B"),
                 action: #selector(toggleSidebar))
+            #else
+            return button(
+                identifier, symbol: "sidebar.left", label: String(localized: "Sidebar"),
+                toolTip: String(localized: "Show or Hide Sidebar  ⌘B"),
+                action: Selector("toggleSidebar"))
+            #endif
         case Self.newChat:
+            #if canImport(ObjectiveC)
             return button(
                 identifier, symbol: "square.and.pencil", label: String(localized: "New Chat"),
                 toolTip: String(localized: "New Chat  ⌘N"),
                 action: #selector(newChatAction))
+            #else
+            return button(
+                identifier, symbol: "square.and.pencil", label: String(localized: "New Chat"),
+                toolTip: String(localized: "New Chat  ⌘N"),
+                action: Selector("newChatAction"))
+            #endif
         case Self.search:
             return searchItem
         case Self.actions:
@@ -132,7 +150,11 @@ final class AIChatWindowChrome: NSObject, WindowChrome, NSToolbarDelegate, NSSea
     func control(
         _ control: NSControl, textView: NSTextView, doCommandBy selector: Selector
     ) -> Bool {
+        #if canImport(ObjectiveC)
         guard selector == #selector(NSResponder.insertNewline(_:)) else { return false }
+        #else
+        guard selector == .insertNewline else { return false }
+        #endif
         let backwards = NSApp.currentEvent?.modifierFlags.contains(.shift) == true
         find.step(backwards ? -1 : 1, in: chat.session.messages)
         return true
@@ -144,6 +166,7 @@ final class AIChatWindowChrome: NSObject, WindowChrome, NSToolbarDelegate, NSSea
 
     // MARK: - Actions
 
+    #if canImport(ObjectiveC)
     @objc private func newChatAction() { coordinator.newChat() }
 
     @objc private func toggleSidebar() {
@@ -151,6 +174,21 @@ final class AIChatWindowChrome: NSObject, WindowChrome, NSToolbarDelegate, NSSea
     }
 
     @objc private func showActions() {
+        presentActionsMenu()
+    }
+    #else
+    private func newChatAction() { coordinator.newChat() }
+
+    private func toggleSidebar() {
+        (window?.contentViewController as? NSSplitViewController)?.toggleSidebar(nil)
+    }
+
+    private func showActions() {
+        presentActionsMenu()
+    }
+    #endif
+
+    private func presentActionsMenu() {
         let menu = AIChatActionsMenu.build(
             chat: chat, coordinator: coordinator,
             findInChat: { [weak self] in self?.searchItem.beginSearchInteraction() })
@@ -313,7 +351,12 @@ private final class ClosureMenuItem: NSMenuItem {
         modifiers: NSEvent.ModifierFlags = .command, _ run: @escaping () -> Void
     ) {
         self.run = run
+        #if canImport(ObjectiveC)
         super.init(title: title, action: #selector(runAction), keyEquivalent: key)
+        #else
+        super.init(title: title, action: Selector("runAction"), keyEquivalent: key)
+        actionClosure = run
+        #endif
         keyEquivalentModifierMask = modifiers
         target = self
         image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
@@ -322,5 +365,7 @@ private final class ClosureMenuItem: NSMenuItem {
     @available(*, unavailable)
     required init(coder: NSCoder) { fatalError() }
 
+    #if canImport(ObjectiveC)
     @objc private func runAction() { run() }
+    #endif
 }

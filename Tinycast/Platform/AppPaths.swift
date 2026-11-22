@@ -2,21 +2,29 @@ import Foundation
 
 /// The per-channel storage roots. Keyed by bundle id so a Dev build never shares a stable's dirs.
 enum AppPaths {
+    static let defaultBundleID: String = {
+        #if DEBUG && !os(macOS)
+        return "com.abueammar.tinycast.dev"
+        #else
+        return "com.abueammar.tinycast"
+        #endif
+    }()
+
     static func caches(
-        bundleID: String = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
+        bundleID: String = Bundle.main.bundleIdentifier ?? defaultBundleID
     ) -> URL {
         root(.cachesDirectory, bundleID: bundleID)
     }
 
     static func applicationSupport(
-        bundleID: String = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
+        bundleID: String = Bundle.main.bundleIdentifier ?? defaultBundleID
     ) -> URL {
         root(.applicationSupportDirectory, bundleID: bundleID)
     }
 
     /// `~/.config/tinycast/settings.json`; another channel suffixes the folder, as `tinycast-dev`.
     static func settingsFile(
-        bundleID: String = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
+        bundleID: String = Bundle.main.bundleIdentifier ?? defaultBundleID
     ) -> URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appending(path: ".config", directoryHint: .isDirectory)
@@ -27,7 +35,7 @@ enum AppPaths {
     /// Snippets or Notes: the folder the user chose, else its home in Application Support.
     static func contentFolder(
         _ chosen: String?, named name: String,
-        bundleID: String = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
+        bundleID: String = Bundle.main.bundleIdentifier ?? defaultBundleID
     ) -> URL {
         guard let chosen, isFolderPath(chosen) else {
             return applicationSupport(bundleID: bundleID).appending(path: name, directoryHint: .isDirectory)
@@ -40,7 +48,7 @@ enum AppPaths {
     /// How a chosen folder is stored: nil for the default, else `~`-relative where it can be.
     static func contentFolderSetting(
         for url: URL, named name: String,
-        bundleID: String = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
+        bundleID: String = Bundle.main.bundleIdentifier ?? defaultBundleID
     ) -> String? {
         let chosen = url.standardizedFileURL.resolvingSymlinksInPath()
         let standard = contentFolder(nil, named: name, bundleID: bundleID).resolvingSymlinksInPath()
@@ -50,7 +58,15 @@ enum AppPaths {
 
     /// Absolute, or under `~/`, so the same path means the same folder on every Mac.
     static func isFolderPath(_ path: String) -> Bool {
-        path.hasPrefix("/") || path.hasPrefix("~/")
+        #if os(Windows)
+        if path.count >= 3 {
+            let chars = Array(path.prefix(3))
+            if chars[0].isLetter && chars[1] == ":" && (chars[2] == "\\" || chars[2] == "/") {
+                return true
+            }
+        }
+        #endif
+        return path.hasPrefix("/") || path.hasPrefix("~/")
     }
 
     private static func configFolderName(bundleID: String) -> String {

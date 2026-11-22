@@ -1,5 +1,9 @@
 import Foundation
 import os
+#if os(Windows)
+import WinSDK
+import ucrt
+#endif
 
 /// Generous: one defaults delta after a backup import carries every library at once.
 private let maximumFrameBytes = 32 << 20
@@ -12,7 +16,11 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
     private(set) var isOpen = true
 
     private let reading: FileHandle
+    #if os(macOS)
     private let channel: DispatchIO
+    #else
+    private let writing: FileHandle
+    #endif
     /// Held so Foundation reaps the child; nil on the child's own side.
     private let child: Process?
     private let reader = DispatchQueue(label: "com.tinycast.process-link.read")
@@ -24,15 +32,24 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
     private init(reading: FileHandle, writing: FileHandle, child: Process?) {
         self.reading = reading
         self.child = child
+        #if os(macOS)
         channel = DispatchIO(type: .stream, fileDescriptor: writing.fileDescriptor, queue: writer) {
             @Sendable _ in
             try? writing.close()
         }
+        #else
+        self.writing = writing
+        #endif
     }
 
     isolated deinit {
         receiver?.cancel()
+        #if os(macOS)
         channel.close(flags: .stop)
+        #else
+        try? writing.close()
+        try? reading.close()
+        #endif
     }
 
     var childProcessIdentifier: pid_t? { child?.processIdentifier }
@@ -46,9 +63,11 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
         process.arguments = arguments
         process.standardInput = input
         process.standardOutput = output
+        #if os(macOS)
         guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else {
             throw POSIXError(.EIO)
         }
+        #endif
         _ = try process.runObservingExit()
         try? input.fileHandleForReading.close()
         try? output.fileHandleForWriting.close()
@@ -58,6 +77,64 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
 
     /// The child's half; stdio then goes to /dev/null, so no print or tool can touch a frame.
     static func standardIO() -> ProcessLink? {
+        #if os(Windows)
+        guard let hIn = GetStdHandle(STD_INPUT_HANDLE), hIn != INVALID_HANDLE_VALUE,
+            let hOut = GetStdHandle(STD_OUTPUT_HANDLE), hOut != INVALID_HANDLE_VALUE,
+            GetFileType(hIn) == DWORD(FILE_TYPE_PIPE),
+            GetFileType(hOut) == DWORD(FILE_TYPE_PIPE)
+        else { return nil }
+        var dupIn: HANDLE?
+        var dupOut: HANDLE?
+        let current = GetCurrentProcess()
+        guard DuplicateHandle(current, hIn, current, &dupIn, 0, false, DWORD(DUPLICATE_SAME_ACCESS)),
+            DuplicateHandle(current, hOut, current, &dupOut, 0, false, DWORD(DUPLICATE_SAME_ACCESS)),
+            let validIn = dupIn, let validOut = dupOut
+        else { return nil }
+        let nulHandle = "NUL".withCString(encodedAs: UTF16.self) { ptr in
+            CreateFileW(
+                ptr,
+                DWORD(GENERIC_READ) | DWORD(bitPattern: GENERIC_WRITE),
+                DWORD(FILE_SHARE_READ | FILE_SHARE_WRITE),
+                nil,
+                DWORD(OPEN_EXISTING),
+                0,
+                nil)
+        }
+        guard let nulHandle, nulHandle != INVALID_HANDLE_VALUE else {
+            CloseHandle(validIn)
+            CloseHandle(validOut)
+            return nil
+        }
+        let nulFd = _open_osfhandle(intptr_t(bitPattern: nulHandle), _O_RDWR | _O_BINARY)
+        guard nulFd >= 0 else {
+            CloseHandle(nulHandle)
+            CloseHandle(validIn)
+            CloseHandle(validOut)
+            return nil
+        }
+        defer { _close(nulFd) }
+        guard _dup2(nulFd, 0) == 0, _dup2(nulFd, 1) == 0 else {
+            CloseHandle(validIn)
+            CloseHandle(validOut)
+            return nil
+        }
+        let inFd = _open_osfhandle(intptr_t(bitPattern: validIn), _O_RDONLY | _O_BINARY)
+        guard inFd >= 0 else {
+            CloseHandle(validIn)
+            CloseHandle(validOut)
+            return nil
+        }
+        let outFd = _open_osfhandle(intptr_t(bitPattern: validOut), _O_WRONLY | _O_BINARY)
+        guard outFd >= 0 else {
+            _close(inFd)
+            CloseHandle(validOut)
+            return nil
+        }
+        return ProcessLink(
+            reading: FileHandle(fileDescriptor: inFd, closeOnDealloc: true),
+            writing: FileHandle(fileDescriptor: outFd, closeOnDealloc: true),
+            child: nil)
+        #else
         var status = stat()
         guard fstat(STDIN_FILENO, &status) == 0, status.st_mode & S_IFMT == S_IFIFO else { return nil }
         let reading = fcntl(STDIN_FILENO, F_DUPFD_CLOEXEC, 0)
@@ -69,10 +146,12 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
         let null = open("/dev/null", O_RDWR | O_CLOEXEC)
         guard null >= 0 else { return nil }
         defer { close(null) }
-        guard fcntl(writing, F_SETNOSIGPIPE, 1) == 0,
-            dup2(null, STDIN_FILENO) >= 0, dup2(null, STDOUT_FILENO) >= 0
-        else { return nil }
+        #if os(macOS)
+        guard fcntl(writing, F_SETNOSIGPIPE, 1) == 0 else { return nil }
+        #endif
+        guard dup2(null, STDIN_FILENO) >= 0, dup2(null, STDOUT_FILENO) >= 0 else { return nil }
         return ProcessLink(reading: readHandle, writing: writeHandle, child: nil)
+        #endif
     }
 
     func start() {
@@ -103,6 +182,7 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
 
     func send(_ message: Outgoing) {
         guard isOpen else { return }
+        #if os(macOS)
         let channel = channel
         let writer = writer
         writer.async { [weak self] in
@@ -121,13 +201,29 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
                 Task { @MainActor [weak self] in self?.finish(error) }
             }
         }
+        #else
+        let writing = writing
+        writer.async { [weak self] in
+            do {
+                try PipeFraming.write(message, to: writing, maximum: maximumFrameBytes)
+            } catch {
+                try? writing.close()
+                Task { @MainActor [weak self] in self?.finish(error) }
+            }
+        }
+        #endif
     }
 
     private func finish(_ error: Error?) {
         guard isOpen else { return }
         isOpen = false
         receiver?.cancel()
+        #if os(macOS)
         channel.close(flags: .stop)
+        #else
+        try? writing.close()
+        try? reading.close()
+        #endif
         if let error { logger.error("Process link closed: \(error.localizedDescription, privacy: .public)") }
         onClose?(error)
     }

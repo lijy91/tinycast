@@ -108,6 +108,9 @@ final class SharedDefaultsMirror {
     private var snapshot: [String: Any] = [:]
     private var observer: NotificationToken?
     private var pendingFlush: Task<Void, Never>?
+    #if !os(macOS)
+    private var pollTask: Task<Void, Never>?
+    #endif
     private var editRevision: UInt64 = 0
     private var unacknowledged: [(revision: UInt64, patch: DefaultsPatch)] = []
 
@@ -122,6 +125,12 @@ final class SharedDefaultsMirror {
         self.send = send
     }
 
+    #if !os(macOS)
+    isolated deinit {
+        pollTask?.cancel()
+    }
+    #endif
+
     func start() {
         snapshot = defaults.persistentDomain(forName: domainName) ?? [:]
         let token = NotificationCenter.default.addObserver(
@@ -130,16 +139,34 @@ final class SharedDefaultsMirror {
             MainActor.assumeIsolated { self?.scheduleFlush() }
         }
         observer = NotificationToken(token, center: .default)
+        #if !os(macOS)
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled else { break }
+                self?.flushChanges()
+            }
+        }
+        #endif
     }
 
     func flush() {
+        #if os(macOS)
         guard pendingFlush != nil else { return }
+        #endif
         pendingFlush?.cancel()
         pendingFlush = nil
+        flushChanges()
+    }
+
+    private func flushChanges() {
         let current = defaults.persistentDomain(forName: domainName) ?? [:]
         let patch = DefaultsPatch(from: snapshot, to: current)
         snapshot = current
         guard !patch.keys.isEmpty else { return }
+        #if os(Windows)
+        _ = defaults.synchronize()
+        #endif
         if role == .main {
             publish(patch.keys)
         } else if let before = Self.encode(patch.before), let after = Self.encode(patch.after) {
@@ -194,6 +221,9 @@ final class SharedDefaultsMirror {
             }
             snapshot[key] = values[key]
         }
+        #if os(Windows)
+        _ = defaults.synchronize()
+        #endif
         reload()
     }
 
@@ -250,6 +280,34 @@ private struct DefaultsPatch {
     private static func equal(_ lhs: Any?, _ rhs: Any?) -> Bool {
         guard let lhs else { return rhs == nil }
         guard let rhs else { return false }
+        #if os(macOS)
         return (lhs as AnyObject).isEqual(rhs)
+        #else
+        switch (lhs, rhs) {
+        case (let a as String, let b as String): return a == b
+        case (let a as Bool, let b as Bool): return a == b
+        case (let a as Int, let b as Int): return a == b
+        case (let a as Int64, let b as Int64): return a == b
+        case (let a as UInt64, let b as UInt64): return a == b
+        case (let a as Double, let b as Double): return a == b
+        case (let a as Float, let b as Float): return a == b
+        case (let a as Data, let b as Data): return a == b
+        case (let a as Date, let b as Date): return a == b
+        case (let a as [Any], let b as [Any]):
+            return a.count == b.count && zip(a, b).allSatisfy { equal($0, $1) }
+        case (let a as [String: Any], let b as [String: Any]):
+            guard a.count == b.count else { return false }
+            return a.allSatisfy { key, val in b.keys.contains(key) && equal(val, b[key]) }
+        case (let a as NSObject, let b as NSObject):
+            return a.isEqual(b)
+        default:
+            if let da = try? PropertyListSerialization.data(fromPropertyList: [lhs], format: .binary, options: 0),
+                let db = try? PropertyListSerialization.data(fromPropertyList: [rhs], format: .binary, options: 0)
+            {
+                return da == db
+            }
+            return false
+        }
+        #endif
     }
 }

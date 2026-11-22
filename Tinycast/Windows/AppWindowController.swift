@@ -85,8 +85,12 @@ final class AppWindowController: NSObject, NSWindowDelegate {
     /// The title bar sits inside the frame but outside the layout area, so it is added back.
     func fitContent(width: CGFloat, height: CGFloat) {
         guard let window else { return }
+        #if os(macOS)
         let titlebar = window.frame.height - window.contentLayoutRect.height
         let size = CGSize(width: width, height: height + titlebar)
+        #else
+        let size = CGSize(width: width, height: height)
+        #endif
         guard window.contentMinSize != size else { return }
         let top = window.frame.maxY
         window.contentMinSize = size
@@ -150,7 +154,9 @@ final class AppWindowController: NSObject, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
         // `NSApp.activate` is async, so re-assert next turn — never onto a window closed since.
         DispatchQueue.main.async { [weak self, weak window] in
-            guard let window, self?.window === window else { return }
+            guard let window, self?.window === window, !AppCore.shared.isShowingDialog else {
+                return
+            }
             window.makeKeyAndOrderFront(nil)
         }
     }

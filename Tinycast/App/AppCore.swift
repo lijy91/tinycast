@@ -259,7 +259,11 @@ final class AppCore {
         })
     private let healthTicker = HealthTicker()
     /// Resolved once by AppKit, so it is what this process shows until it relaunches.
+    #if os(macOS)
     private let launchLocalization = Bundle.main.preferredLocalizations.first
+    #else
+    private let launchLocalization = Bundle.main.crossPreferredLocalizations.first
+    #endif
     private var relaunchRequested = false
 
     private init() {

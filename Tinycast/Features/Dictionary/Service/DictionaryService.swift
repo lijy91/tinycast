@@ -28,6 +28,7 @@ enum DictionaryService {
 }
 
 /// Dictionary Services' record calls: what Dictionary.app reads, though no header declares them.
+#if os(macOS)
 private struct DictionaryRecords: Sendable {
     private typealias ActiveDictionaries = @convention(c) () -> Unmanaged<CFArray>?
     private typealias CopyRecords =
@@ -93,3 +94,10 @@ private struct DictionaryRecords: Sendable {
         return name.contains("Thesaurus")
     }
 }
+#else
+private struct DictionaryRecords: Sendable {
+    static let resolved: DictionaryRecords? = nil
+    func hasThesaurus() -> Bool { false }
+    func blocks(for term: String, in scope: DictionaryScope) -> [DictionaryEntry.Block]? { nil }
+}
+#endif

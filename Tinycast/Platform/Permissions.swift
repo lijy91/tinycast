@@ -33,6 +33,9 @@ enum Permissions {
 
     /// Full Disk Access has no prompt and no API; opening a file it guards is the only probe.
     static func hasFullDiskAccess() -> Bool {
+        #if os(Windows)
+        return true
+        #else
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let guarded = [
             home + "/Library/Application Support/com.apple.TCC/TCC.db",
@@ -45,6 +48,7 @@ enum Permissions {
             close(descriptor)
             return true
         }
+        #endif
     }
 
     @MainActor

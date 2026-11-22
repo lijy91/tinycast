@@ -35,8 +35,13 @@ enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
             self = .english
             return
         }
+        #if os(macOS)
         let match = Bundle.preferredLocalizations(
             from: Self.allCases.map(\.rawValue), forPreferences: preferences)
+        #else
+        let match = Bundle.crossPreferredLocalizations(
+            from: Self.allCases.map(\.rawValue), forPreferences: preferences)
+        #endif
         self = match.first.flatMap(Self.init(rawValue:)) ?? .english
     }
 }

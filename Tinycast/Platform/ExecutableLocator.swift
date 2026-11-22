@@ -8,11 +8,13 @@ enum ExecutableLocator {
         extraHomePaths: [String] = [],
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) async -> URL? {
+        #if !os(Windows)
         // The shell's answer wins: a stale install in a well-known prefix can shadow the working one.
         if let path = await shellLookup(command, shell: loginShell()) {
             let url = URL(fileURLWithPath: path)
             if isExecutable(url) { return url }
         }
+        #endif
         return wellKnown(command, extraHomePaths: extraHomePaths, environment: environment)
             .first(where: isExecutable)
     }
@@ -23,6 +25,14 @@ enum ExecutableLocator {
         adding extra: [String: String] = [:],
         inherited: [String: String] = ProcessInfo.processInfo.environment
     ) -> [String: String] {
+        #if os(Windows)
+        let pathKey = inherited.keys.first { $0.caseInsensitiveCompare("PATH") == .orderedSame } ?? "PATH"
+        let paths = [executable.deletingLastPathComponent().path] + [inherited[pathKey] ?? ""]
+        return
+            inherited
+            .merging(extra) { _, new in new }
+            .merging(["NO_COLOR": "1", pathKey: paths.joined(separator: ";")]) { _, new in new }
+        #else
         let paths =
             [executable.deletingLastPathComponent().path, "/opt/homebrew/bin", "/usr/local/bin"]
             + [inherited["PATH"] ?? "/usr/bin:/bin"]
@@ -30,12 +40,37 @@ enum ExecutableLocator {
             inherited
             .merging(extra) { _, new in new }
             .merging(["NO_COLOR": "1", "PATH": paths.joined(separator: ":")]) { _, new in new }
+        #endif
     }
 
     nonisolated private static func wellKnown(
         _ command: String, extraHomePaths: [String], environment: [String: String]
     ) -> [URL] {
         let home = FileManager.default.homeDirectoryForCurrentUser
+        #if os(Windows)
+        let rawPath =
+            environment.first { $0.key.caseInsensitiveCompare("PATH") == .orderedSame }?.value ?? ""
+        let rawExts =
+            environment.first { $0.key.caseInsensitiveCompare("PATHEXT") == .orderedSame }?.value
+            ?? ".EXE;.CMD;.BAT"
+        let exts =
+            command.contains(".")
+            ? [""]
+            : rawExts.split(separator: ";").map { String($0).lowercased() } + [""]
+        var dirs = rawPath.split(separator: ";").map { URL(fileURLWithPath: String($0)) }
+        if let appData = environment["APPDATA"] {
+            dirs.append(URL(fileURLWithPath: appData).appending(path: "npm"))
+        }
+        dirs += [".local/bin", ".volta/bin", ".bun/bin", ".cargo/bin"].map { home.appending(path: $0) }
+        var candidates: [URL] = []
+        for dir in dirs {
+            for ext in exts {
+                candidates.append(dir.appending(path: command + ext))
+            }
+        }
+        candidates += extraHomePaths.map { home.appending(path: $0) }
+        return candidates
+        #else
         var candidates = (environment["PATH"] ?? "")
             .split(separator: ":")
             .map { URL(fileURLWithPath: String($0)).appending(path: command) }
@@ -49,6 +84,7 @@ enum ExecutableLocator {
         candidates += extraHomePaths.map { home.appending(path: $0) }
         candidates += nvmInstalls(command, in: home)
         return candidates
+        #endif
     }
 
     /// nvm keeps one `bin` per Node version; the newest is the one `nvm use default` would pick.
@@ -62,7 +98,15 @@ enum ExecutableLocator {
     }
 
     nonisolated private static func isExecutable(_ url: URL) -> Bool {
-        FileManager.default.isExecutableFile(atPath: url.path)
+        #if os(Windows)
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), !isDir.boolValue
+        else { return false }
+        let ext = url.pathExtension.lowercased()
+        return ext == "exe" || ext == "cmd" || ext == "bat" || ext == "com"
+        #else
+        return FileManager.default.isExecutableFile(atPath: url.path)
+        #endif
     }
 
     /// `-i` reads the rc file that puts a version manager on PATH; a watchdog bounds a hang.
@@ -96,7 +140,11 @@ enum ExecutableLocator {
                 .last { $0.hasPrefix(answerMarker) }?
                 .dropFirst(answerMarker.count)
                 .trimmingCharacters(in: .whitespaces) ?? ""
+            #if os(Windows)
+            return path.dropFirst().hasPrefix(":\\") ? path : nil
+            #else
             return path.hasPrefix("/") ? path : nil
+            #endif
         }.value
     }
 
@@ -104,7 +152,10 @@ enum ExecutableLocator {
 
     /// fish binds `-c` arguments to `$argv`, not `$1`; any other shell falls back to zsh.
     nonisolated private static func lookup(_ command: String, in shell: URL) -> (URL, [String]) {
-        switch shell.lastPathComponent {
+        switch shell.lastPathComponent.lowercased() {
+        case "cmd.exe", "cmd":
+            let script = "for /f \"delims=\" %i in ('where \(command) 2^>nul') do @echo \(answerMarker)%i"
+            return (shell, ["/c", script])
         case "fish":
             let script = #"printf '\#(answerMarker)%s\n' (command -v -- $argv[1])"#
             return (shell, ["-ilc", script, command])
@@ -117,9 +168,14 @@ enum ExecutableLocator {
     }
 
     nonisolated private static func loginShell() -> URL {
+        #if os(macOS)
         guard let entry = getpwuid(getuid()), let shell = entry.pointee.pw_shell else {
             return URL(fileURLWithPath: "/bin/zsh")
         }
         return URL(fileURLWithPath: String(cString: shell))
+        #else
+        let comspec = ProcessInfo.processInfo.environment["ComSpec"] ?? "C:\\Windows\\System32\\cmd.exe"
+        return URL(fileURLWithPath: comspec)
+        #endif
     }
 }

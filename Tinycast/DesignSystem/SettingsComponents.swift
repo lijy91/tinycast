@@ -422,6 +422,7 @@ private struct AliasTextField: NSViewRepresentable {
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            #if canImport(ObjectiveC)
             switch commandSelector {
             case #selector(NSResponder.insertNewline(_:)):
                 textView.window?.makeFirstResponder(nil)
@@ -441,6 +442,27 @@ private struct AliasTextField: NSViewRepresentable {
             default:
                 return false
             }
+            #else
+            switch commandSelector {
+            case .insertNewline:
+                textView.window?.makeFirstResponder(nil)
+                return true
+            case .insertTab:
+                textView.window?.recalculateKeyViewLoop()
+                textView.window?.selectNextKeyView(textView)
+                return true
+            case .insertBacktab:
+                textView.window?.recalculateKeyViewLoop()
+                textView.window?.selectPreviousKeyView(textView)
+                return true
+            case .cancelOperation:
+                field.onCancel()
+                textView.window?.makeFirstResponder(nil)
+                return true
+            default:
+                return false
+            }
+            #endif
         }
     }
 }

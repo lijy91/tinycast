@@ -4,6 +4,7 @@ import Foundation
 enum ProcessDisplayName {
     /// LaunchServices has no public setter; a macOS without this SPI keeps the bundle's name.
     static func set(_ name: String) {
+        #if os(macOS)
         typealias CurrentApplication = @convention(c) () -> Unmanaged<AnyObject>?
         typealias SetInformation =
             @convention(c) (
@@ -23,5 +24,6 @@ enum ProcessDisplayName {
         _ = unsafeBitCast(setInformation, to: SetInformation.self)(
             defaultSession, application.takeUnretainedValue(), displayNameKey.load(as: CFString.self),
             name as CFString, nil)
+        #endif
     }
 }

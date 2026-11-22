@@ -222,7 +222,12 @@ final class AppSettings {
 
     /// The per-app key System Settings writes too, so the two never disagree.
     var language: AppLanguage {
-        didSet { defaults.set([language.rawValue], forKey: Key.language.rawValue) }
+        didSet {
+            defaults.set([language.rawValue], forKey: Key.language.rawValue)
+            #if !os(macOS)
+            _ = defaults.synchronize()
+            #endif
+        }
     }
 
     /// Which separators the calculator reads and writes; `.system` follows Language & Region.
@@ -839,14 +844,23 @@ final class AppSettings {
     /// With no per-app list the bundle follows macOS's languages, so this runs before any lookup.
     static func pinLanguage() {
         UserDefaults.standard.set([storedLanguage.rawValue], forKey: Key.language.rawValue)
+        #if !os(macOS)
+        _ = UserDefaults.standard.synchronize()
+        #endif
     }
 
     /// The app's own domain only: a plain read falls through to the global list.
     private static var storedLanguage: AppLanguage {
-        AppLanguage(
-            storedPreferences: Bundle.main.bundleIdentifier
-                .flatMap(UserDefaults.standard.persistentDomain(forName:))?[Key.language.rawValue]
-                as? [String], systemPreferences: SystemLanguages.preferred)
+        #if os(macOS)
+        let stored = Bundle.main.bundleIdentifier
+            .flatMap(UserDefaults.standard.persistentDomain(forName:))?[Key.language.rawValue]
+            as? [String]
+        #else
+        let domain = Bundle.main.bundleIdentifier ?? AppPaths.defaultBundleID
+        let stored = UserDefaults.standard.crossStringArray(
+            inPersistentDomain: domain, forKey: Key.language.rawValue)
+        #endif
+        return AppLanguage(storedPreferences: stored, systemPreferences: SystemLanguages.preferred)
     }
 
     init() {
