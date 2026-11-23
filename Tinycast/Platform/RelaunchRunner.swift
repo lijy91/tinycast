@@ -1,4 +1,7 @@
 import Foundation
+#if os(Windows)
+import WinSDK
+#endif
 
 /// `open` on a running bundle id only re-activates it, so the relaunch outlives us.
 enum RelaunchRunner {
@@ -15,11 +18,24 @@ enum RelaunchRunner {
         // Orphaned on our exit and reparented to launchd, which is the whole point.
         try? process.run()
         #elseif os(Windows)
-        guard let exe = ProcessInfo.processInfo.arguments.first else { return }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: exe)
-        process.arguments = ["--relaunch"]
-        try? process.run()
+        guard let exe = ProcessInfo.processInfo.arguments.first, !exe.isEmpty else { return }
+        let escaped = exe.replacingOccurrences(of: "\"", with: "\\\"")
+        var commandLine = Array("\"\(escaped)\" --relaunch\0".utf16)
+        var startupInfo = STARTUPINFOW()
+        startupInfo.cb = DWORD(MemoryLayout<STARTUPINFOW>.size)
+        var processInfo = PROCESS_INFORMATION()
+        let flags = DWORD(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS)
+        let launched = exe.withCString(encodedAs: UTF16.self) { appPtr in
+            commandLine.withUnsafeMutableBufferPointer { cmdBuf in
+                CreateProcessW(
+                    appPtr, cmdBuf.baseAddress, nil, nil, false, flags, nil, nil,
+                    &startupInfo, &processInfo)
+            }
+        }
+        if launched {
+            CloseHandle(processInfo.hThread)
+            CloseHandle(processInfo.hProcess)
+        }
         #endif
     }
 }

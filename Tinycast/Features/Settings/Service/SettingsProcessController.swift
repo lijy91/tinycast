@@ -42,6 +42,14 @@ final class SettingsProcessController {
         return true
     }
 
+    func prepareForTermination() {
+        guard let link else { return }
+        mirror?.flush()
+        pendingShow = nil
+        isClosing = true
+        link.close()
+    }
+
     private func launch(_ request: SettingsRequest) {
         let link: ProcessLink<SettingsWire.ToSettings, SettingsWire.ToMainApp>
         do {

@@ -60,4 +60,9 @@ final class SettingsCoordinator {
         guard case .window(let window) = surface else { return }
         window.close()
     }
+
+    func prepareForTermination() {
+        guard case .process(let process) = surface else { return }
+        process.prepareForTermination()
+    }
 }

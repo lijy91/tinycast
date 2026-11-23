@@ -57,10 +57,20 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
     /// The child ends itself when the link closes.
     static func spawn(_ executable: URL, arguments: [String]) throws -> ProcessLink {
         let process = Process()
-        let input = Pipe()
-        let output = Pipe()
         process.executableURL = executable
         process.arguments = arguments
+        #if os(Windows)
+        let stdio = try Pipe._makeChildStdioPipes()
+        process.standardInput = stdio.childInput
+        process.standardOutput = stdio.childOutput
+        _ = try process.runObservingExit()
+        try? stdio.childInput.close()
+        try? stdio.childOutput.close()
+        return ProcessLink(
+            reading: stdio.parentReading, writing: stdio.parentWriting, child: process)
+        #else
+        let input = Pipe()
+        let output = Pipe()
         process.standardInput = input
         process.standardOutput = output
         #if os(macOS)
@@ -73,6 +83,7 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
         try? output.fileHandleForWriting.close()
         return ProcessLink(
             reading: output.fileHandleForReading, writing: input.fileHandleForWriting, child: process)
+        #endif
     }
 
     /// The child's half; stdio then goes to /dev/null, so no print or tool can touch a frame.
@@ -212,6 +223,10 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
             }
         }
         #endif
+    }
+
+    func close() {
+        finish(nil)
     }
 
     private func finish(_ error: Error?) {
