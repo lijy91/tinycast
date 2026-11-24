@@ -173,47 +173,62 @@ final class ExtensionRuntime: @unchecked Sendable {
     /// Installs `__tinycastHost` (the JS→Swift seam) and `__tinycastCompile`.
     private func installHost(in context: JSContext) {
         #if os(macOS)
+        typealias Void1 = @convention(block) (String) -> Void
+        typealias Void2 = @convention(block) (String, String) -> Void
+        typealias Void4 = @convention(block) (String, String, String, String) -> Void
+        typealias TimerFn = @convention(block) (String, Double, Bool) -> Void
+        typealias SyncFn = @convention(block) (String, String, String) -> String
+        typealias CompileFn = @convention(block) (String, String) -> JSValue?
+        #else
+        typealias Void1 = (String) -> Void
+        typealias Void2 = (String, String) -> Void
+        typealias Void4 = (String, String, String, String) -> Void
+        typealias TimerFn = (String, Double, Bool) -> Void
+        typealias SyncFn = (String, String, String) -> String
+        typealias CompileFn = (String, String) -> JSValue?
+        #endif
+
         let host = JSValue(newObjectIn: context)
 
-        let log: @convention(block) (String, String) -> Void = { [weak self] level, message in
+        let log: Void2 = { [weak self] level, message in
             self?.report(level: level, message: message)
         }
-        let render: @convention(block) (String, String) -> Void = { [weak self] session, json in
+        let render: Void2 = { [weak self] session, json in
             self?.deliverRender(session: session, json: json)
         }
-        let failed: @convention(block) (String, String) -> Void = { [weak self] session, message in
+        let failed: Void2 = { [weak self] session, message in
             guard let self else { return }
             let delegate = self.delegate
             Task { @MainActor in delegate?.runtime(self, session: session, didFail: message) }
         }
-        let navigation: @convention(block) (String, String) -> Void = { [weak self] session, depth in
+        let navigation: Void2 = { [weak self] session, depth in
             guard let self else { return }
             let delegate = self.delegate
             let value = Int(depth) ?? 1
             Task { @MainActor in delegate?.runtime(self, session: session, navigationDepth: value) }
         }
-        let finished: @convention(block) (String) -> Void = { [weak self] session in
+        let finished: Void1 = { [weak self] session in
             guard let self else { return }
             let delegate = self.delegate
             Task { @MainActor in delegate?.runtime(self, session: session, didFinish: ()) }
         }
-        let fieldCommand: @convention(block) (String, String) -> Void = { _, _ in
+        let fieldCommand: Void2 = { _, _ in
             // Field focus requests have no native target yet; the palette focuses the first field.
         }
-        let invoke: @convention(block) (String, String, String, String) -> Void = {
+        let invoke: Void4 = {
             [weak self] callId, api, method, argsJSON in
             self?.invokeAsync(callId: callId, api: api, method: method, argsJSON: argsJSON)
         }
-        let invokeSync: @convention(block) (String, String, String) -> String = {
+        let invokeSync: SyncFn = {
             [weak self] api, method, argsJSON in
             guard let self else { return #"{"ok":false,"error":"runtime gone"}"# }
             return self.nodeShims.perform(api: api, method: method, argsJSON: argsJSON)
         }
-        let startTimer: @convention(block) (String, Double, Bool) -> Void = {
+        let startTimer: TimerFn = {
             [weak self] id, milliseconds, repeats in
             self?.startTimer(id: id, milliseconds: milliseconds, repeats: repeats)
         }
-        let clearTimer: @convention(block) (String) -> Void = { [weak self] id in
+        let clearTimer: Void1 = { [weak self] id in
             self?.clearTimer(id: id)
         }
 
@@ -230,13 +245,12 @@ final class ExtensionRuntime: @unchecked Sendable {
         context.setObject(host, forKeyedSubscript: "__tinycastHost" as NSString)
 
         // Global scope is the point: the extension body must not see the runtime's own locals.
-        let compile: @convention(block) (String, String) -> JSValue? = { [weak self] code, filename in
+        let compile: CompileFn = { [weak self] code, filename in
             guard let context = self?.context else { return nil }
             let wrapped = "(function (exports, require, module, __filename, __dirname) {\n\(code)\n})"
             return context.evaluateScript(wrapped, withSourceURL: URL(fileURLWithPath: filename))
         }
         context.setObject(compile, forKeyedSubscript: "__tinycastCompile" as NSString)
-        #endif
     }
 
     // MARK: - Host call plumbing
