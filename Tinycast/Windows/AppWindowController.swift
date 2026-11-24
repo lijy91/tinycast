@@ -82,15 +82,13 @@ final class AppWindowController: NSObject, NSWindowDelegate {
         window?.close()
     }
 
-    /// The title bar sits inside the frame but outside the layout area, so it is added back.
+    /// The title bar sits inside the content view when full-size, so any overlap is added back.
     func fitContent(width: CGFloat, height: CGFloat) {
         guard let window else { return }
-        #if os(macOS)
-        let titlebar = window.frame.height - window.contentLayoutRect.height
+        let titlebar =
+            window.contentRect(forFrameRect: window.frame).height
+            - window.contentLayoutRect.height
         let size = CGSize(width: width, height: height + titlebar)
-        #else
-        let size = CGSize(width: width, height: height)
-        #endif
         guard window.contentMinSize != size else { return }
         let top = window.frame.maxY
         window.contentMinSize = size
