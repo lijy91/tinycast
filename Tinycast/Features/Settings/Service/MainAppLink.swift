@@ -8,7 +8,7 @@ final class MainAppLink {
     @ObservationIgnored private(set) lazy var extensions = ExtensionLibrary(mainApp: self)
 
     @ObservationIgnored private let link: ProcessLink<SettingsWire.ToMainApp, SettingsWire.ToSettings>
-    @ObservationIgnored private let mirror: SharedStateMirror
+    @ObservationIgnored private let mirror: SharedStateMirror?
     @ObservationIgnored private unowned let core: AppCore
     private struct PendingCall {
         let reply: CheckedContinuation<SettingsWire.Reply, Error>
@@ -32,10 +32,10 @@ final class MainAppLink {
 
     init(
         link: ProcessLink<SettingsWire.ToMainApp, SettingsWire.ToSettings>,
-        mirror: (@escaping (SharedChange) -> Void) -> SharedStateMirror, core: AppCore
+        mirror: ((@escaping (SharedChange) -> Void) -> SharedStateMirror)?, core: AppCore
     ) {
         self.link = link
-        self.mirror = mirror { [weak link] in link?.send(.changed($0)) }
+        self.mirror = mirror? { [weak link] in link?.send(.changed($0)) }
         self.core = core
     }
 
@@ -44,14 +44,14 @@ final class MainAppLink {
         // The main app quit, relaunched or crashed; without it, Settings edits nothing live.
         link.onClose = { [weak self] _ in self?.didClose() }
         link.start()
-        mirror.start()
+        mirror?.start()
         observeRecording()
     }
 
     /// State goes first, so the main app acts on what the pane just changed.
     func send(_ action: SettingsAction) {
         guard acceptsRequests else { return }
-        mirror.flush()
+        mirror?.flush()
         link.send(.perform(action))
     }
 
@@ -96,7 +96,7 @@ final class MainAppLink {
     ) async throws -> SettingsWire.Reply {
         try Task.checkCancellation()
         guard acceptsRequests else { throw SettingsWire.Failure.disconnected }
-        mirror.flush()
+        mirror?.flush()
         let id = UUID()
         let reply = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -124,7 +124,7 @@ final class MainAppLink {
         calls.removeAll()
         for call in pending { call.reply.resume(throwing: SettingsWire.Failure.disconnected) }
         if case .open = closeState {
-            core.terminate()
+            if mirror != nil { core.terminate() }
         } else {
             finishClosing()
         }
@@ -137,7 +137,7 @@ final class MainAppLink {
     func beginClosing() {
         guard case .open = closeState else { return }
         closeState = .waiting(nil)
-        mirror.flush()
+        mirror?.flush()
         link.send(.closing)
         closeTimeout = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(1)) } catch { return }
@@ -168,7 +168,7 @@ final class MainAppLink {
             core.settingsCoordinator.show(request)
             link.send(.activate(id))
         case .changed(let change):
-            mirror.apply(change)
+            mirror?.apply(change)
         case .extensionProgress(let id, let event):
             calls[id]?.onProgress(event)
         case .reply(let id, let reply):

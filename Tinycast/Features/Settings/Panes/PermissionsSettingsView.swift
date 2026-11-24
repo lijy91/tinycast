@@ -218,6 +218,21 @@ private struct PermissionSettingsIcon: View {
     let path: String
 
     var body: some View {
+        #if CROSS_SWIFTUI_HARMONY
+        if !FileManager.default.fileExists(atPath: path) {
+            Image(systemName: path.localizedCaseInsensitiveContains("Calendar") ? "calendar" : "accessibility")
+                .font(.system(size: SettingsListMetrics.iconSize - Theme.Spacing.xs))
+                .frame(width: SettingsListMetrics.iconSize, height: SettingsListMetrics.iconSize)
+                .accessibilityHidden(true)
+        } else {
+            imageBody
+        }
+        #else
+        imageBody
+        #endif
+    }
+
+    private var imageBody: some View {
         Image(nsImage: IconCache.icon(forFile: path))
             .resizable()
             .renderingMode(.original)

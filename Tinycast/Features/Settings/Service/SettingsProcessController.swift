@@ -27,6 +27,17 @@ final class SettingsProcessController {
         self.core = core
     }
 
+    #if CROSS_SWIFTUI_HARMONY
+    func attachInProcess(link: ProcessLink<SettingsWire.ToSettings, SettingsWire.ToMainApp>) {
+        link.onReceive = { [weak self] in self?.receive($0) }
+        link.onClose = { [weak self] error in self?.didClose(error: error) }
+        self.link = link
+        self.mirror = nil
+        link.start()
+        observeStatus()
+    }
+    #endif
+
     func show(_ request: SettingsRequest) {
         guard let link else { return launch(request) }
         let id = UUID()

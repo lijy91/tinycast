@@ -85,6 +85,12 @@ final class AppCore {
     /// Settings' own process only: its line to the main app, which panes read and ask through.
     @ObservationIgnored private(set) var mainApp: MainAppLink?
 
+    #if CROSS_SWIFTUI_HARMONY
+    func attachInProcessMainApp(_ link: MainAppLink) {
+        self.mainApp = link
+    }
+    #endif
+
     /// Set when a layout editor should open with Settings; the pane consumes it.
     var pendingWindowLayoutEdit: WindowLayoutEditRequest?
     var pendingExtensionStoreInstall: ExtensionDeepLink.StoreInstall?

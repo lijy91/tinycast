@@ -3,6 +3,8 @@ import os
 #if os(Windows)
 import WinSDK
 import ucrt
+#else
+import Darwin
 #endif
 
 /// Generous: one defaults delta after a backup import carries every library at once.
@@ -15,11 +17,15 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
     var onClose: ((Error?) -> Void)?
     private(set) var isOpen = true
 
-    private let reading: FileHandle
+    private let reading: FileHandle?
     #if os(macOS)
-    private let channel: DispatchIO
+    private let channel: DispatchIO?
     #else
-    private let writing: FileHandle
+    private let writing: FileHandle?
+    #endif
+    #if CROSS_SWIFTUI_HARMONY
+    private var loopbackSend: ((Outgoing) -> Void)?
+    private var loopbackClose: (() -> Void)?
     #endif
     /// Held so Foundation reaps the child; nil on the child's own side.
     private let child: Process?
@@ -42,13 +48,48 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
         #endif
     }
 
+    #if CROSS_SWIFTUI_HARMONY
+    private init(loopback: Bool) {
+        self.reading = nil
+        self.writing = nil
+        self.child = nil
+    }
+
+    /// In-process transport for sandboxed hosts where the app runs inside a single Ability.
+    static func makeLoopbackPair() -> (
+        ProcessLink<Outgoing, Incoming>, ProcessLink<Incoming, Outgoing>
+    ) where Outgoing: Decodable, Incoming: Encodable {
+        let a = ProcessLink<Outgoing, Incoming>(loopback: true)
+        let b = ProcessLink<Incoming, Outgoing>(loopback: true)
+        a.loopbackSend = { [weak b] message in
+            DispatchQueue.main.async {
+                guard let b, b.isOpen else { return }
+                b.onReceive?(message)
+            }
+        }
+        a.loopbackClose = { [weak b] in
+            DispatchQueue.main.async { b?.finish(nil) }
+        }
+        b.loopbackSend = { [weak a] message in
+            DispatchQueue.main.async {
+                guard let a, a.isOpen else { return }
+                a.onReceive?(message)
+            }
+        }
+        b.loopbackClose = { [weak a] in
+            DispatchQueue.main.async { a?.finish(nil) }
+        }
+        return (a, b)
+    }
+    #endif
+
     isolated deinit {
         receiver?.cancel()
         #if os(macOS)
-        channel.close(flags: .stop)
+        channel?.close(flags: .stop)
         #else
-        try? writing.close()
-        try? reading.close()
+        try? writing?.close()
+        try? reading?.close()
         #endif
     }
 
@@ -156,7 +197,7 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
         let writeHandle = FileHandle(fileDescriptor: writing, closeOnDealloc: true)
         let null = open("/dev/null", O_RDWR | O_CLOEXEC)
         guard null >= 0 else { return nil }
-        defer { close(null) }
+        defer { Darwin.close(null) }
         #if os(macOS)
         guard fcntl(writing, F_SETNOSIGPIPE, 1) == 0 else { return nil }
         #endif
@@ -166,8 +207,10 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
     }
 
     func start() {
-        guard isOpen, receiver == nil else { return }
-        let reading = reading
+        #if CROSS_SWIFTUI_HARMONY
+        if loopbackSend != nil { return }
+        #endif
+        guard isOpen, receiver == nil, let reading else { return }
         let (messages, continuation) = AsyncThrowingStream.makeStream(of: Incoming.self)
         reader.async {
             do {
@@ -193,8 +236,14 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
 
     func send(_ message: Outgoing) {
         guard isOpen else { return }
+        #if CROSS_SWIFTUI_HARMONY
+        if let loopbackSend {
+            loopbackSend(message)
+            return
+        }
+        #endif
         #if os(macOS)
-        let channel = channel
+        guard let channel else { return }
         let writer = writer
         writer.async { [weak self] in
             do {
@@ -213,7 +262,7 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
             }
         }
         #else
-        let writing = writing
+        guard let writing else { return }
         writer.async { [weak self] in
             do {
                 try PipeFraming.write(message, to: writing, maximum: maximumFrameBytes)
@@ -233,11 +282,17 @@ final class ProcessLink<Outgoing: Encodable & Sendable, Incoming: Decodable & Se
         guard isOpen else { return }
         isOpen = false
         receiver?.cancel()
+        #if CROSS_SWIFTUI_HARMONY
+        let closePeer = loopbackClose
+        loopbackSend = nil
+        loopbackClose = nil
+        closePeer?()
+        #endif
         #if os(macOS)
-        channel.close(flags: .stop)
+        channel?.close(flags: .stop)
         #else
-        try? writing.close()
-        try? reading.close()
+        try? writing?.close()
+        try? reading?.close()
         #endif
         if let error { logger.error("Process link closed: \(error.localizedDescription, privacy: .public)") }
         onClose?(error)

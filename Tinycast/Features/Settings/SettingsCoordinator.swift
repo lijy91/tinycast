@@ -10,8 +10,22 @@ final class SettingsCoordinator {
     }
 
     private let surface: Surface
+    #if CROSS_SWIFTUI_HARMONY
+    private let inProcessBridge: SettingsProcessController?
+    #endif
 
     init(core: AppCore) {
+        #if CROSS_SWIFTUI_HARMONY
+        let (mainSide, settingsSide) =
+            ProcessLink<SettingsWire.ToSettings, SettingsWire.ToMainApp>.makeLoopbackPair()
+        let bridge = SettingsProcessController(core: core)
+        let mainApp = MainAppLink(link: settingsSide, mirror: nil, core: core)
+        core.attachInProcessMainApp(mainApp)
+        bridge.attachInProcess(link: mainSide)
+        mainApp.start()
+        inProcessBridge = bridge
+        surface = .window(SettingsWindowController(core: core, onClose: {}))
+        #else
         switch ProcessRole.current {
         case .settings:
             surface = .window(
@@ -24,6 +38,7 @@ final class SettingsCoordinator {
         case .main:
             surface = .process(SettingsProcessController(core: core))
         }
+        #endif
     }
 
     /// A nil `tab` only reveals the window, so re-opening a minimised one keeps the pane it was on.
